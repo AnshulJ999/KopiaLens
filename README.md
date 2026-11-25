@@ -72,7 +72,7 @@ It only reads, and never changes anything in Backblaze. It's free, you don't nee
 | Platform | Get it |
 |---|---|
 | Windows 10 and 11 | Installer or portable zip |
-| macOS (Apple silicon) | App (.dmg) |
+| macOS (Apple silicon and Intel) | App (.dmg) |
 | Linux (x64, arm64) | AppImage, .deb, .rpm |
 | Docker (amd64, arm64) | `anshulj99/kopialens` or `ghcr.io/anshulj999/kopialens`: [compose example](compose.example.yml), [guide](https://kopialens.com/docs/docker) |
 | Home Assistant | [Add-on repository](https://github.com/AnshulJ999/homeassistant-addons) |

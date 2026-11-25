@@ -1,0 +1,74 @@
+# Mac check: the test suite on macOS (Apple silicon, optionally Intel).
+#
+# On demand: Actions > "Mac check" > Run workflow, on any branch or commit. Use it before a release,
+# when merging a pull request, or during Mac-specific work.
+# Automatic runs on pushes that touch Mac-sensitive code are built in but off: uncomment the push
+# trigger below to turn them on.
+
+name: Mac check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test (empty: the branch this is run from)"
+        type: string
+        default: ""
+      intel:
+        description: "Also test on an Intel Mac"
+        type: boolean
+        default: false
+  # push:
+  #   branches: [main, beta]
+  #   paths:
+  #     - "shell/**"
+  #     - "packaging/**"
+  #     - "app/core/**"
+  #     - "app/backblaze/**"
+  #     - "requirements*.txt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          INTEL: ${{ inputs.intel }}
+        run: |
+          rows='{"name":"apple-silicon","os":"macos-latest"}'
+          [ "$INTEL" = true ] && rows="$rows"',{"name":"intel","os":"macos-15-intel"}'
+          echo "matrix={\"include\":[${rows}]}" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Tests on macOS ${{ matrix.name }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Python packages
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q --ignore=app/tests/ui

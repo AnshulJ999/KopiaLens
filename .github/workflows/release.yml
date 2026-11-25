@@ -1,0 +1,471 @@
+# KopiaLens release builds.
+#
+# Started by hand or by the release script only: Actions > "Release builds" > Run workflow, on main.
+# Nothing here runs on a push, a pull request or a schedule. It builds the commit of the tag given
+# (or the "commit" input) and, when asked, attaches the files to a DRAFT release in this repository.
+# Publishing, Docker's moving tags and the update service are handled outside this workflow.
+# A tag with a pre-release part (v1.2.0-beta.1) is a beta: the draft is marked pre-release.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD   the updater signing key
+# GHCR pushes use the run's own GITHUB_TOKEN; each image package must grant this repository write access.
+
+name: Release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag in this repository, e.g. v1.2.3 or v1.3.0-beta.1"
+        required: true
+        type: string
+      commit:
+        description: "Commit or branch to build (empty: the commit of the tag)"
+        type: string
+        default: ""
+      windows:
+        description: "Windows installer + portable (x64)"
+        type: boolean
+        default: true
+      linux_x64:
+        description: "Linux AppImage + deb + rpm (x64); betas: AppImage only"
+        type: boolean
+        default: true
+      linux_arm:
+        description: "Linux AppImage + deb + rpm (arm64, for Raspberry Pi 5 and ARM laptops); betas: AppImage only"
+        type: boolean
+        default: true
+      macos:
+        description: "macOS app + dmg (Apple silicon)"
+        type: boolean
+        default: true
+      macos_intel:
+        description: "macOS app + dmg (Intel)"
+        type: boolean
+        default: false
+      docker:
+        description: "Docker image amd64 + arm64"
+        type: boolean
+        default: true
+      home_assistant:
+        description: "Home Assistant add-on images amd64 + aarch64 (needs Docker and Push images)"
+        type: boolean
+        default: true
+      amd64_images:
+        description: "Build the amd64 Docker and Home Assistant images here (off: built on the PC by the release script)"
+        type: boolean
+        default: true
+      push_images:
+        description: "Push the images to GHCR; off: build and start-up check only"
+        type: boolean
+        default: true
+      publish:
+        description: "Attach the files to a DRAFT release in this repository"
+        type: choice
+        options: [none, draft]
+        default: none
+
+permissions: {}
+
+# No concurrency group: the release script runs the Intel Mac build beside the main run.
+
+env:
+  GHCR_IMAGE: ghcr.io/anshulj999/kopialens
+  GHCR_HA_IMAGE: ghcr.io/anshulj999/kopialens-ha
+  PYTHON_VERSION: "3.13"
+  NUITKA_VERSION: "4.3.1"
+  TAURI_CLI_VERSION: "2.12.1"
+
+jobs:
+  prepare:
+    name: Version and plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      commit: ${{ steps.c.outputs.commit }}
+      desktop: ${{ steps.plan.outputs.desktop }}
+      any_desktop: ${{ steps.plan.outputs.any_desktop }}
+      docker: ${{ steps.plan.outputs.docker }}
+      home_assistant: ${{ steps.plan.outputs.home_assistant }}
+    steps:
+      - id: v
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # The signing key is only ever used from main.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::start this workflow from main (started from $GITHUB_REF)"; exit 1
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag must look like v1.2.3 or v1.2.3-beta.1, got '$TAG'"; exit 1
+          fi
+          version="${TAG#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - id: c
+        name: The commit to build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          sha() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq .sha 2>/dev/null; }
+          if [ -n "$COMMIT" ]; then
+            commit=$(sha "$COMMIT") || { echo "::error::no commit or branch '$COMMIT' in this repository"; exit 1; }
+          else
+            commit=$(sha "$TAG") || { echo "::error::no tag $TAG: tag the commit first, or give the commit to build"; exit 1; }
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "Building $commit for $TAG" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.c.outputs.commit }}
+          sparse-checkout: appversion.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Compare with the newest version tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          # A warning only: the release and the tag history should name the same version.
+          refs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref')
+          newest=$(python3 -c 'import sys; sys.path.insert(0, "."); import appversion as a; v = [x for x in map(a.normalize, sys.stdin) if x]; print(max(v, key=a.order_key) if v else "")' <<< "$refs")
+          if [ -n "$newest" ] && [ "$newest" != "$VERSION" ]; then
+            echo "::warning::building $VERSION, but the newest version tag is $newest"
+          fi
+      - id: plan
+        env:
+          WINDOWS: ${{ inputs.windows }}
+          LINUX_X64: ${{ inputs.linux_x64 }}
+          LINUX_ARM: ${{ inputs.linux_arm }}
+          MACOS: ${{ inputs.macos }}
+          MACOS_INTEL: ${{ inputs.macos_intel }}
+          AMD64_IMAGES: ${{ inputs.amd64_images }}
+        run: |
+          rows=()
+          [ "$WINDOWS" = true ] && rows+=('{"name":"windows-x64","os":"windows-latest"}')
+          [ "$LINUX_X64" = true ] && rows+=('{"name":"linux-x64","os":"ubuntu-22.04"}')
+          [ "$LINUX_ARM" = true ] && rows+=('{"name":"linux-arm64","os":"ubuntu-22.04-arm"}')
+          [ "$MACOS" = true ] && rows+=('{"name":"macos-arm64","os":"macos-latest"}')
+          [ "$MACOS_INTEL" = true ] && rows+=('{"name":"macos-x64","os":"macos-15-intel"}')
+          joined=$(IFS=,; echo "${rows[*]}")
+          echo "desktop={\"include\":[${joined}]}" >> "$GITHUB_OUTPUT"
+          echo "any_desktop=$([ ${#rows[@]} -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          docker='{"arch":"arm64","os":"ubuntu-24.04-arm"}'
+          ha='{"arch":"aarch64","docker_arch":"arm64","os":"ubuntu-24.04-arm"}'
+          if [ "$AMD64_IMAGES" = true ]; then
+            docker='{"arch":"amd64","os":"ubuntu-latest"},'"$docker"
+            ha='{"arch":"amd64","docker_arch":"amd64","os":"ubuntu-latest"},'"$ha"
+          fi
+          echo "docker={\"include\":[${docker}]}" >> "$GITHUB_OUTPUT"
+          echo "home_assistant={\"include\":[${ha}]}" >> "$GITHUB_OUTPUT"
+
+  key-check:
+    name: Updater key
+    needs: prepare
+    if: needs.prepare.outputs.any_desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: The signing key and its password work together
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # Fails in a minute instead of at the end of a long build.
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is empty"; exit 1; }
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD is empty"; exit 1; }
+          cd "$RUNNER_TEMP"
+          printf probe > probe.txt
+          npx --yes "@tauri-apps/cli@$TAURI_CLI_VERSION" signer sign probe.txt > /dev/null   # key and password come from the environment
+          [ -s probe.txt.sig ] || { echo "::error::the signing key and password don't work together"; exit 1; }
+          echo "The updater key opens."
+
+  desktop:
+    name: Desktop ${{ matrix.name }}
+    needs: [prepare, key-check]
+    if: needs.prepare.outputs.any_desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.desktop) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120   # a cold build takes 30-45 min; this only stops a stuck job
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      KOPIALENS_RELEASE_VERSION: ${{ inputs.tag }}
+      KOPIALENS_COMMIT: ${{ needs.prepare.outputs.commit }}
+      KOPIALENS_BUILD_ROOT: ${{ github.workspace }}/klbuild
+      KOPIALENS_RELEASE_DIR: ${{ github.workspace }}/klrelease
+      KOPIALENS_BUILD_PYTHON: python
+      KOPIALENS_BUILD_ALLOW_DOWNLOADS: "1"   # Nuitka's own helper downloads; no one is there to confirm
+      KOPIALENS_BANNED_FROM: service
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev build-essential file patchelf ccache
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-18
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            shell/src-tauri -> ../../klbuild/shell-target
+            shell/cli-launcher -> ../../klbuild/launcher-target
+            shell/disk-scanner -> ../../klbuild/scanner-target
+          cache-bin: true
+      - name: Tauri CLI ${{ env.TAURI_CLI_VERSION }}
+        run: cargo tauri --version 2>/dev/null | grep -q "$TAURI_CLI_VERSION" || cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked
+      - name: Python packages
+        run: python -m pip install -r requirements.txt "nuitka==$NUITKA_VERSION"
+      - name: Build
+        env:   # the updater key reaches this step only, never the third-party actions above
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: python packaging/release.py check banned server stage desktop portable smoke leak-scan
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.name }}
+          path: ${{ github.workspace }}/klrelease/
+          retention-days: 1
+          if-no-files-found: error
+
+  docker:
+    name: Docker ${{ matrix.arch }}
+    needs: prepare
+    if: inputs.docker || inputs.home_assistant
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.docker) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      KOPIALENS_RELEASE_VERSION: ${{ inputs.tag }}
+      KOPIALENS_BANNED_FROM: service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Version file, banned licences and the Notes widget
+        run: |
+          python -m pip install -r requirements.txt
+          python packaging/release.py check banned
+          # The Notes widget (Settings > Experimental) ships only where its sources are available.
+          if python -c "import sys; sys.path.insert(0, 'packaging'); import notes_bundle; sys.exit(not notes_bundle.available())"; then
+            python packaging/notes_bundle.py packaging/docker/devnotes
+          else
+            echo "::notice::Notes widget sources not here; this image ships without Notes"
+          fi
+        env:
+          KOPIALENS_RELEASE_DIR: ${{ runner.temp }}/klrelease
+          KOPIALENS_BUILD_ROOT: ${{ runner.temp }}/klbuild
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: inputs.push_images
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: ${{ inputs.push_images }}
+          load: ${{ !inputs.push_images }}
+          provenance: false
+          tags: ${{ env.GHCR_IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          build-args: KOPIALENS_COMMIT=${{ needs.prepare.outputs.commit }}
+          labels: |
+            org.opencontainers.image.title=KopiaLens
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.url=https://kopialens.com
+            org.opencontainers.image.source=https://github.com/AnshulJ999/KopiaLens
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+      - name: Start-up check
+        run: |
+          image="$GHCR_IMAGE:$VERSION-$ARCH"
+          docker run -d --name kl -p 7123:7123 -e KOPIALENS_HTTPS=off -e KOPIALENS_NO_UPDATE_CHECK=1 \
+            -e KOPIALENS_NO_USAGE_STATS=1 "$image"
+          for _ in $(seq 1 60); do
+            got=$(curl -fsS http://127.0.0.1:7123/health 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])" 2>/dev/null) && break
+            sleep 2
+          done
+          docker logs kl | tail -20
+          docker stop kl > /dev/null
+          [ "$got" = "$VERSION" ] || { echo "::error::/health answered '$got', expected $VERSION"; exit 1; }
+
+  home-assistant:
+    name: Home Assistant ${{ matrix.arch }}
+    needs: [prepare, docker]
+    if: inputs.home_assistant && inputs.push_images
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.home_assistant) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          sparse-checkout: packaging/homeassistant
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: packaging/homeassistant/kopialens
+          platforms: linux/${{ matrix.docker_arch }}
+          push: true
+          provenance: false
+          build-args: |
+            BUILD_FROM=${{ env.GHCR_IMAGE }}:${{ env.VERSION }}-${{ matrix.docker_arch }}
+            BUILD_VERSION=${{ env.VERSION }}
+            BUILD_ARCH=${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/AnshulJ999/homeassistant-addons
+          tags: |
+            ${{ env.GHCR_HA_IMAGE }}-${{ matrix.arch }}:${{ env.VERSION }}
+            ${{ needs.prepare.outputs.prerelease != 'true' && format('{0}-{1}:latest', env.GHCR_HA_IMAGE, matrix.arch) || '' }}
+      - name: Add-on folder for the add-on repository
+        if: matrix.arch == 'amd64'
+        run: |
+          mkdir -p "$RUNNER_TEMP/addon"
+          cp -r packaging/homeassistant/kopialens "$RUNNER_TEMP/addon/"
+          sed -i "s/^version: .*/version: \"$VERSION\"/" "$RUNNER_TEMP/addon/kopialens/config.yaml"
+          grep -q "^version: \"$VERSION\"$" "$RUNNER_TEMP/addon/kopialens/config.yaml"
+      - if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: homeassistant-addon
+          path: ${{ runner.temp }}/addon/
+          retention-days: 3
+
+  release:
+    name: Release files
+    needs: [prepare, desktop]
+    if: needs.prepare.outputs.any_desktop == 'true' && needs.desktop.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write   # the draft release in this repository
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      KOPIALENS_RELEASE_VERSION: ${{ inputs.tag }}
+      KOPIALENS_RELEASE_DIR: ${{ github.workspace }}/klrelease
+      KOPIALENS_BUILD_ROOT: ${{ github.workspace }}/klbuild
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: ${{ github.workspace }}/klrelease
+      # Kept here because the next step uses up the notices parts; the release script merges from these.
+      - if: inputs.publish == 'draft'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: merge-inputs
+          path: |
+            ${{ github.workspace }}/klrelease/update-*.json
+            ${{ github.workspace }}/klrelease/THIRD-PARTY-NOTICES.part-*.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: latest.json, klens.py, SHA256SUMS.txt
+        run: |
+          python -m pip install -r requirements.txt
+          python packaging/release.py update-file cli checksums
+          rm -f "$KOPIALENS_RELEASE_DIR"/release.log
+          ls -la "$KOPIALENS_RELEASE_DIR"
+      - if: inputs.publish == 'none'   # with a draft, the files are on the draft itself
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-all
+          path: ${{ github.workspace }}/klrelease/
+          retention-days: 3
+      - name: Release notes from CHANGELOG.md
+        if: inputs.publish == 'draft'
+        run: |
+          # The version's section (a pre-release falls back to its base version's), up to the next "## [" heading.
+          section() {
+            awk -v h="## [$1]" 'index($0, h) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md
+          }
+          heading=$(grep -m1 -F "## [$VERSION]" CHANGELOG.md || grep -m1 -F "## [${VERSION%%-*}]" CHANGELOG.md || true)
+          if [ -n "$heading" ] && ! grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}' <<< "$heading"; then
+            echo "::warning::'$heading' has no date yet; the public changelog gets the release date when the release is published"
+          fi
+          section "$VERSION" > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || section "${VERSION%%-*}" > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::warning::CHANGELOG.md has no section for $VERSION; the draft gets a placeholder note"
+            echo "Draft made by the release builds. Check the files, write the notes, then publish." > "$RUNNER_TEMP/notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Draft release
+        if: inputs.publish == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd "$KOPIALENS_RELEASE_DIR"
+          files=()
+          for f in *; do [[ -f "$f" && "$f" != update-*.json ]] && files+=("$f"); done
+          kind=()
+          [ "$PRERELEASE" = true ] && kind=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft "${kind[@]}" --title "KopiaLens $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${files[@]}"
+      - name: Summary
+        run: |
+          {
+            echo "## KopiaLens $VERSION$([ "$PRERELEASE" = true ] && echo ' (beta)')"
+            echo
+            echo '```'
+            cat "$KOPIALENS_RELEASE_DIR/SHA256SUMS.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

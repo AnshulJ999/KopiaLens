@@ -16,8 +16,8 @@ and the Home Assistant add-on's config.yaml; `desktop` stamps it into the Tauri 
 and tauri.conf.json are never edited by hand.
 
 Output: <BUILD_ROOT>/release/<version>/ (or KOPIALENS_RELEASE_DIR) plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. Every build carries the Notes
-widget (Settings > Experimental, off by default). --testing (old name --with-notes) makes a testing
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. A build carries the Notes widget
+(Settings > Experimental, off by default) when its sources are present. --testing (old name --with-notes) makes a testing
 build: Experimental and Notes start switched on, its files are named -testing and it writes no
 update file, so it can never be published as an update. --update-endpoint=<url> makes an update-test
 build (files named -updatetest, no update file) that asks only that address for updates
@@ -599,7 +599,11 @@ def step_tests() -> None:
 
 
 def step_server() -> None:
-    notes = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"), testing=_ctx["testing"])
+    notes = ""
+    if notes_bundle.available():
+        notes = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"), testing=_ctx["testing"])
+    else:
+        log("WARNING: Notes widget sources not found; this build ships without Notes")
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
         {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": notes})
 
