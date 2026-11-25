@@ -1,0 +1,25 @@
+# Local settings and data
+data/
+settings.json
+settings.json.tmp
+repos.json
+users.json
+.env
+.env.*
+logs/
+packaging/docker/devnotes/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Build output
+node_modules/
+shell/src-tauri/target/
+shell/src-tauri/gen/
+shell/src-tauri/release-stage/
+shell/disk-scanner/target/
+shell/cli-launcher/target/

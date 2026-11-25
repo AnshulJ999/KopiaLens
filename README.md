@@ -140,6 +140,14 @@ I built KopiaLens with a lot of AI help, mainly Claude Opus, and more than 500 h
 
 KopiaLens is an independent project, not affiliated with or endorsed by the Kopia project.
 
+## Source and Licence
+
+KopiaLens is open source under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You can read, build, change and share it under that licence. If you share a changed version, or run one for other people over a network, its source has to be available to them under the same licence.
+
+Pro is a licence key that unlocks the Pro actions in the official builds; buying it is how the project is funded. Organisations that can't use AGPL software can get KopiaLens under commercial terms instead: [support@kopialens.com](mailto:support@kopialens.com). [Building from source](BUILDING.md) · [Contributing](CONTRIBUTING.md)
+
+The KopiaLens name and logo are not covered by the licence.
+
 ## Support the project
 
 KopiaLens is built by one independent developer. If you'd like to back its development, use the Sponsor button at the top of this page, or see [kopialens.com/sponsor](https://kopialens.com/sponsor).
