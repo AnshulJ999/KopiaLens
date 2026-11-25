@@ -1,0 +1,15 @@
+
+    <!-- Upgrade notice: opens beside a Pro button a Free install clicks (licence.js). -->
+    <template x-if="proNotice">
+      <div class="fixed inset-0 z-[70]" @click.self="closeProNotice()">
+        <div class="kl-pronotice" role="dialog" aria-labelledby="kl-pro-title"
+             :style="`left:${proNotice.left}px;` + (proNotice.below ? `top:${proNotice.top}px;` : `bottom:${window.innerHeight - proNotice.top}px;`)">
+          <div class="t" id="kl-pro-title"><span class="protag">PRO</span><span x-text="proNoticeTitle()"></span></div>
+          <p x-text="proNotice.line + ' The preview stays free.'"></p>
+          <div class="acts">
+            <button class="kl-btn quiet" @click="proEnterLicence()">Enter licence…</button>
+            <button class="kl-btn primary" id="kl-pro-plans" @click="proPrimary()" x-text="lic.state === 'expired' ? 'Renew' : 'See plans'"></button>
+          </div>
+        </div>
+      </div>
+    </template>

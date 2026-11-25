@@ -1,0 +1,101 @@
+
+    <!-- Add repository: the connect form from onboarding, in a dialog (repos.js). -->
+    <template x-if="repoAdd && cx">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6">
+        <div class="w-[40rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm">
+          <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+            <div class="font-medium">Add repository</div>
+            <button @click="closeAddRepo()" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-4">
+{% include "partials/connectform.html" %}
+          </div>
+          <div class="kl-footer">
+            <span class="kl-note" x-show="cx.added.length">New repositories are indexed at the next scheduled time, or with Index now.</span>
+            <span class="spacer"></span>
+            <button @click="closeAddRepo()" class="kl-btn primary" x-text="cx.added.length ? 'Done' : 'Close'"></button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Move or copy a repository's connection file into KopiaLens's folder (repos.js openTakeConnection). -->
+    <template x-if="tcDlg">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="tcDlg = null" data-testid="take-connection">
+        <form @submit.prevent="tcSubmit('move')" class="w-[32rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 space-y-3">
+            <h3 class="text-[0.9375rem] font-semibold leading-snug">Move this connection into KopiaLens's folder?</h3>
+            <template x-if="tcDlg.preview">
+              <div class="space-y-3">
+                <div class="kl-facts">
+                  <div class="r"><span class="k">Repository</span><span x-text="tcDlg.repo.name"></span></div>
+                  <div class="r"><span class="k">From</span><span class="break-all" x-text="tcDlg.preview.from"></span></div>
+                  <div class="r" x-show="!tcDlg.preview.ours"><span class="k">To</span><span class="break-all" x-text="tcDlg.preview.to"></span></div>
+                </div>
+                <p class="kl-note" x-show="tcDlg.preview.ours">This connection file is already in KopiaLens's folder.</p>
+                <template x-for="w in tcWarnings()" :key="w">
+                  <p class="text-xs rounded border border-warn-bd bg-warn-bg px-2.5 py-1.5" x-text="w"></p>
+                </template>
+                <template x-if="!tcDlg.preview.ours">
+                  <div class="space-y-2">
+                    <label class="flex flex-col gap-1 text-xs font-medium">Repository password
+                      <input type="password" x-model="tcDlg.pw" autocomplete="off" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+                    <p class="kl-note">Copy keeps the old file, so both apps stay connected. KopiaLens runs backups only if you choose it, and never while another app is running them.</p>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <p class="text-xs" style="color:var(--danger)" x-show="tcDlg.error" x-text="tcDlg.error"></p>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button type="button" @click="tcDlg = null" class="kl-btn quiet">Cancel</button>
+            <template x-if="tcDlg.preview && !tcDlg.preview.ours">
+              <div class="flex gap-2">
+                <button type="button" @click="tcSubmit('copy')" :disabled="!tcDlg.pw || !!tcDlg.busy" class="kl-btn" x-text="tcDlg.busy === 'copy' ? 'Copying…' : 'Copy instead'"></button>
+                <button type="submit" :disabled="!tcDlg.pw || !!tcDlg.busy" class="kl-btn primary" x-text="tcDlg.busy === 'move' ? 'Moving…' : 'Move connection'"></button>
+              </div>
+            </template>
+          </div>
+        </form>
+      </div>
+    </template>
+
+    <!-- Edit / remove a repository -->
+    <template x-if="repoDlg">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="repoDlg = null">
+        <form @submit.prevent="repoDlgSubmit()" class="w-[28rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 space-y-3">
+            <h3 class="text-[0.9375rem] font-semibold leading-snug" x-text="repoDlg.mode === 'edit' ? 'Edit repository' : 'Remove ' + repoDlg.repo.name + ' from KopiaLens?'"></h3>
+            <template x-if="repoDlg.mode === 'edit'">
+              <div class="grid gap-2 sm:grid-cols-[1fr_9rem]">
+                <label class="flex flex-col gap-1 text-xs font-medium">Name
+                  <input autocomplete="off" type="text" x-model="repoDlg.name" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+                <label class="flex flex-col gap-1 text-xs font-medium">Short name
+                  <input autocomplete="off" type="text" x-model="repoDlg.short_name" maxlength="12" class="fld border border-bd bg-surface2"></label>
+              </div>
+            </template>
+            <template x-if="repoDlg.mode === 'remove'">
+              <div class="space-y-3">
+                <div class="kl-facts">
+                  <template x-for="row in raRemoveFacts()" :key="row[0]">
+                    <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
+                  </template>
+                </div>
+                <p class="kl-note" x-show="repoDlg.repo.kind !== 'backblaze'">KopiaLens deletes its index and history for this repository. The backups stay in the kopia repository, and you can add it again later.</p>
+                <label x-show="repoDlg.preview && repoDlg.preview.managed_config" class="flex items-start gap-2 text-xs">
+                  <input autocomplete="off" type="checkbox" x-model="repoDlg.deleteConfig" class="mt-0.5">
+                  <span>Also delete the connection file KopiaLens created<span class="block text-muted">KopiaUI and the kopia command line can use it too. Keep it if they do.</span></span></label>
+              </div>
+            </template>
+            <p class="text-xs" style="color:var(--danger)" x-show="repoDlg.error" x-text="repoDlg.error"></p>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button type="button" @click="repoDlg = null" class="kl-btn">Cancel</button>
+            <button type="submit" :class="repoDlg.mode === 'remove' ? 'kl-btn danger' : 'kl-btn primary'" :disabled="repoDlg.busy"
+                    x-text="repoDlg.busy ? (repoDlg.mode === 'remove' ? 'Removing…' : 'Saving…') : (repoDlg.mode === 'remove' ? 'Remove repository' : 'Save')"></button>
+          </div>
+        </form>
+      </div>
+    </template>

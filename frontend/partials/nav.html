@@ -1,0 +1,257 @@
+{% from "partials/logo.html" import logo_mark %}
+    <!-- One row normally; when zoomed in or narrow, the buttons wrap to a second row instead of being cut off. -->
+    <header class="kl-chrome min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
+      <div class="flex items-start shrink-0">
+        <button @click="goHome()" class="flex items-center font-semibold text-lg" title="Go to the first tab">
+          {{ logo_mark("k3g", 'x-show="logo === \'k3g\'"') }}
+          {{ logo_mark("k6s", 'x-show="logo === \'k6s\'" x-cloak') }}
+          {{ logo_mark("k3a", 'x-show="logo === \'k3a\'" x-cloak') }}
+          {{ logo_mark("tile", 'x-show="logo === \'tile\'" x-cloak') }}
+          Kopia<span class="text-ok">Lens</span></button>
+        <span x-show="lic.state === 'active' && showProBadge" x-cloak class="pro-mark" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">Pro</span>
+      </div>
+      <div class="relative shrink-0" @click.outside="repoMenu = false">
+        <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]" data-tour="repo"
+                aria-haspopup="menu" :aria-expanded="repoMenu" title="Switch repository">
+          <span class="truncate" x-text="noRepos ? 'No repository' : repoName(repo)"></span>
+          <i x-show="repoKind === 'kopia' && wm && wmMode() !== 'full' && designIs('permsign', 'icon', 'icon')" x-cloak data-testid="wm-icon"
+             class="ic text-warn" :class="wmMode() === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode()) : ''"></i>
+          <i class="ic ic-caret-down text-muted"></i>
+        </button>
+        <span x-show="isDemo() || demoBadge()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
+              title="Invented names, real numbers. Actions are simulated and change nothing. Pro features are unlocked.">Demo</span>
+        <div x-show="repoMenu" x-cloak role="menu" class="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
+          <template x-for="item in repos" :key="item.id">
+            <button type="button" role="menuitemradio" :aria-checked="item.id === repo" @click="pickRepo(item.id)"
+                    class="w-full text-left px-3 py-1.5 hover:bg-head flex items-center gap-2">
+              <span class="w-4 text-ok"><i x-show="item.id === repo" class="ic ic-check"></i></span>
+              <span class="truncate flex-1" x-text="item.name"></span>
+              <i x-show="item.kind !== 'backblaze' && wm && wmMode(item.id) !== 'full'" class="ic text-warn"
+                 :class="wmMode(item.id) === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode(item.id)) : ''"></i>
+              <span class="text-[0.6875rem] text-muted" x-text="item.kind === 'backblaze' ? 'Backblaze' : cxTypeLabel((item.storage || {}).type)"></span>
+            </button>
+          </template>
+          <div class="my-1 border-t border-bd"></div>
+          <button type="button" role="menuitem" x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" @click="repoMenu = false; await openSettings(); settingsTab = 'writemode'"
+                  class="w-full text-left px-3 py-1.5 hover:bg-head pl-8" x-text="'Permissions: ' + (wm ? wmLabel(wmMode()) : '') + '…'"></button>
+          <button type="button" role="menuitem" @click="openAddRepo()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Add repository…</button>
+          <button type="button" role="menuitem" x-show="repoKind === 'kopia' && !isSample()" @click="openTakeConnection(repo)" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Move connection into KopiaLens…</button>
+          <button type="button" role="menuitem" @click="openRepoAdmin()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Manage repositories…</button>
+        </div>
+      </div>
+      <!-- Grows and shrinks with the window instead of holding a fixed wide box. -->
+      <div class="relative flex-1 min-w-[10rem] max-w-[clamp(14rem,30vw,30rem)]" data-tour="search">
+        <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
+             switches and loads; clicking in only focuses. -->
+        <input type="search" name="kl-search" autocomplete="off" aria-label="Search" x-model="query" @input.debounce.300ms="headerSearch()"
+          class="fld w-full border border-bd bg-surface2 pl-9"
+          :disabled="repoKind==='server' || noRepos" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : 'Matches anywhere in the path. Use * as a wildcard.'"
+          :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : (repoKind==='server' ? 'Search needs the index' : 'Search files across all snapshots...')">
+        <i class="ic ic-search absolute left-3 top-1/2 -translate-y-1/2 text-faint"></i>
+      </div>
+      <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
+        <!-- Chip tray: jobs and pending indexes merge into one chip each; past three chips the rest fold into "+N". -->
+        <template x-if="runningJobs.length === 1">
+          <button @click="openJobPanel(runningJobs[0].job_id)" class="h-8 rounded border px-3 flex items-center gap-1.5" x-show="chipShown('jobs')"
+            :class="runningJobs[0].state === 'running' ? 'border-warn-bd bg-warn-bg text-warn' : 'border-danger bg-danger-bg text-danger'"
+            :title="jobChipTitle(runningJobs[0])" data-testid="job-chip">
+            <span class="w-1.5 h-1.5 rounded-full" :class="runningJobs[0].state === 'running' ? 'bg-warn animate-pulse' : 'bg-danger'"></span>
+            <span class="truncate max-w-[180px]" x-text="runningJobs[0].label"></span>
+            <span x-text="jobPct(runningJobs[0])"></span>
+          </button>
+        </template>
+        <span class="kl-dd" x-show="runningJobs.length > 1 && chipShown('jobs')" x-cloak @click.outside="if (chipMenu === 'jobs') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'jobs' ? '' : 'jobs'" class="h-8 rounded border px-3 flex items-center gap-1.5" data-testid="jobs-chip"
+                  :class="jobsFailed() ? 'border-danger bg-danger-bg text-danger' : 'border-warn-bd bg-warn-bg text-warn'" :aria-expanded="chipMenu === 'jobs'">
+            <span class="w-1.5 h-1.5 rounded-full" :class="jobsFailed() ? 'bg-danger' : 'bg-warn animate-pulse'"></span>
+            <span x-text="jobsChipText()"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'jobs'" x-cloak role="menu">
+{% include "partials/chipjobs.html" %}
+          </div>
+        </span>
+        <template x-if="indexPending.length === 1">
+          <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2" x-show="chipShown('pending')" :title="pendingTitle(indexPending[0])">
+            <span x-text="(indexPending[0].repo !== repo ? repoLabel(indexPending[0].repo) + ' · ' : '') + pendingText(indexPending[0])"></span>
+            <button x-show="indexPending[0].reason !== 'first'" class="underline" @click="pendingRunNow(indexPending[0].repo)">Update now</button>
+          </span>
+        </template>
+        <span class="kl-dd" x-show="indexPending.length > 1 && chipShown('pending')" x-cloak @click.outside="if (chipMenu === 'pending') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'pending' ? '' : 'pending'" class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3 flex items-center gap-1.5"
+                  data-testid="pending-chip" :aria-expanded="chipMenu === 'pending'">
+            <span x-text="indexPending.length + ' index updates waiting'"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'pending'" x-cloak role="menu">
+{% include "partials/chippending.html" %}
+          </div>
+        </span>
+        <span x-show="chipShown('updated')" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2 flex items-center gap-2">
+          <span>Index updated</span>
+          <button class="underline" @click="reloadAfterIndex()">Reload</button>
+        </span>
+        <button x-show="chipShown('wm')" x-cloak @click="await openSettings(); settingsTab = 'writemode'"
+                class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3" data-testid="wm-chip"
+                title="Permissions for this repository. Click to change them." x-text="wm ? wmLabel(wmMode()) : ''"></button>
+        <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="chipShown('mounts')" x-cloak>
+          <button @click="open = !open; if (open) loadMounts()" class="h-8 rounded border border-bd bg-surface px-3 flex items-center gap-1.5"
+                  :aria-expanded="open" data-testid="mount-chip" title="Mounted snapshots">
+            <span x-text="mounts.length + ' mounted'"></span><i class="ic ic-caret-down"></i></button>
+          <div class="absolute right-0 top-full mt-1 z-30 w-[52rem] max-w-[92vw] rounded-md border border-bd bg-surface shadow-lg text-sm" x-show="open" x-cloak>
+{% include "partials/mountlist.html" %}
+          </div>
+        </span>
+        <span class="kl-dd" x-show="chipMore().length" x-cloak @click.outside="if (chipMenu === 'more') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'more' ? '' : 'more'" class="h-8 rounded border border-bd bg-surface px-2.5 flex items-center gap-1"
+                  data-testid="chip-more" :aria-expanded="chipMenu === 'more'" :title="chipMoreTitle()">
+            <span x-text="'+' + chipMore().length"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'more'" x-cloak role="menu">
+            <template x-if="chipMore().includes('jobs')"><div>
+{% include "partials/chipjobs.html" %}
+            </div></template>
+            <template x-if="chipMore().includes('pending')"><div>
+{% include "partials/chippending.html" %}
+            </div></template>
+            <button x-show="chipMore().includes('updated')" type="button" role="menuitem" @click="chipMenu = ''; reloadAfterIndex()">Index updated · Reload</button>
+            <button x-show="chipMore().includes('wm')" type="button" role="menuitem" @click="chipMenu = ''; await openSettings(); settingsTab = 'writemode'"
+                    x-text="'Permissions: ' + (wm ? wmLabel(wmMode()) : '')"></button>
+            <button x-show="chipMore().includes('mounts')" type="button" role="menuitem" @click="chipMenu = ''; active = 'tasks'; activate()"
+                    x-text="mounts.length + ' mounted · Show in Tasks'"></button>
+          </div>
+        </span>
+        <!-- Index status: click for the panel. While a pass runs it carries the live percentage
+             (only when one honestly exists - the tree sync reports counters instead). -->
+        <button x-show="repoKind!=='backblaze' && !isDemo() && !noRepos" @click="openIndexPanel()"
+                class="h-8 rounded border px-2 flex items-center gap-1.5"
+                :class="indexStatus.building ? 'border-warn-bd bg-warn-bg text-warn' : 'border-bd bg-surface2'"
+                :title="indexTooltip()">
+          <span x-show="indexStatus.building" class="w-2 h-2 rounded-full animate-pulse"
+                :class="indexPct(indexStatus) == null ? 'bg-warn' : 'bg-ok'"></span>
+          <span x-text="indexLine()"></span>
+        </button>
+        <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="kl-fill h-8 rounded px-3 disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
+        <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
+        <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.startsWith('Couldn') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
+        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="kl-fill h-8 rounded px-3 flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
+        <button x-show="!noRepos" @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
+        <div class="relative" @click.outside="timeMenu = false">
+          <button @click="toggleTimeFmt()" @contextmenu.prevent="timeMenu = !timeMenu" class="h-8 w-8 rounded border border-bd kl-ibtn kl-hasmenu" :aria-label="'Times: ' + timeFmtLabel()"
+                  :title="'Times: ' + timeFmtLabel() + '. Click to switch. Right-click for more.'" data-testid="time-button">
+            <i class="ic" :class="{ relative: 'ic-timer', absolute: 'ic-clock' }[timeFmt] || 'ic-time-auto'"></i></button>
+          <div x-show="timeMenu" x-cloak role="menu" class="kl-menu" data-testid="time-menu">
+            <div class="hd">Times</div>
+            <template x-for="m in timeFmtChoices" :key="m[0]">
+              <button type="button" @click="setTimeFmt(m[0]); timeMenu = false"><i class="ic ic-check mr-1" :class="timeFmt === m[0] ? '' : 'opacity-0'"></i><span x-text="m[1]"></span></button>
+            </template>
+            <div class="sep"></div>
+            <div class="hd">Columns with their own choice</div>
+            <template x-for="o in (timeMenu ? timeOverrideList() : [])" :key="o.key + o.field">
+              <div class="kl-ovr flex items-center gap-3 px-3 py-1.5 text-sm whitespace-nowrap"><span x-text="o.where"></span><span class="ml-auto text-muted" x-text="o.label"></span>
+                <button type="button" class="kl-ovr-x" @click.stop="dropTimeOverride(o)" :title="o.title + ': follow the button again'" aria-label="Use the button's choice">&times;</button></div>
+            </template>
+            <div x-show="timeMenu && !timeOverrideList().length" class="px-3 py-1.5 text-sm text-muted whitespace-nowrap">None. Right-click a time column's header to pick one.</div>
+            <div class="sep"></div>
+            <button type="button" @click="resetTimeOverrides()" :disabled="!(timeMenu && timeOverrideList().length)" class="disabled:opacity-50">Use this button's choice everywhere</button>
+          </div>
+        </div>
+        <div class="relative" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+          <button @click="quickTheme()" @contextmenu.prevent="open = !open" class="h-8 w-8 rounded border border-bd kl-ibtn kl-hasmenu" title="Switch between your light and dark theme. Right-click to pick a theme." aria-label="Switch theme"><i class="ic" :class="dark ? 'ic-sun' : 'ic-moon'"></i></button>
+          <div x-show="open" x-cloak role="menu" class="kl-menu" data-testid="theme-picker">
+            <div class="hd">Theme</div>
+            <template x-for="t in THEMES" :key="t.id">
+              <button type="button" role="menuitemradio" :aria-checked="theme === t.id" @click="open = false; setTheme(t.id)" class="flex items-center gap-2" :title="t.title || ''">
+                <span class="inline-block w-3.5 h-3.5 rounded-full border border-bd shrink-0" :style="'background:' + t.swatch"></span>
+                <span class="flex-1" x-text="t.label"></span><i x-show="theme === t.id" class="ic ic-check text-ok"></i>
+              </button>
+            </template>
+            <div class="sep"></div>
+            <button type="button" @click="open = false; settingsTab = 'appearance'; openSettings()">More in Settings…</button>
+          </div>
+        </div>
+        <button x-show="update().available" x-cloak @click="showUpdate = true" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2"
+                :title="'KopiaLens ' + update().latest + ' is out'">Update available</button>
+        <div class="relative" @click.outside="helpMenu = false">
+          <button @click="toggleHelpMenu()" data-tour="help" class="h-8 w-8 rounded border border-bd kl-ibtn" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-label="Help" aria-haspopup="menu" :aria-expanded="helpMenu"><i class="ic ic-help"></i></button>
+          <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
+            <button type="button" role="menuitem" @click="openDocs('README')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
+            <button type="button" role="menuitem" @click="startTour()" :disabled="noRepos" :title="noRepos ? 'Connect a repository first' : ''"
+                    class="w-full text-left px-3 py-1.5 hover:bg-head disabled:opacity-50" data-testid="help-tour">Take the tour</button>
+            <a x-show="help && help.links && help.links.discord" role="menuitem" :href="help && help.links && help.links.discord" target="_blank" rel="noopener"
+               @click="helpMenu = false" class="block w-full text-left px-3 py-1.5 hover:bg-head">Join our Discord</a>
+            <div class="my-1 border-t border-bd"></div>
+            <button type="button" role="menuitem" @click="openReport()" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
+            <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Diagnostics bundle…</button>
+            <button type="button" role="menuitem" @click="openFeedback()" class="w-full text-left px-3 py-1.5 hover:bg-head" data-testid="help-feedback">Give feedback…</button>
+            <div class="my-1 border-t border-bd"></div>
+            <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
+                    x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>
+            <!-- Hidden for now; kept for a later decision. -->
+            <button type="button" role="menuitem" x-show="false" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">Support KopiaLens…</button>
+            <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">About KopiaLens</button>
+            <template x-if="isDesktopWindow()">
+              <div>
+                <div class="my-1 border-t border-bd"></div>
+                <div class="flex items-center gap-1 px-3 py-1">
+                  <span class="flex-1">Zoom</span>
+                  <button type="button" @click="zoomStep(-1)" class="kl-btn" style="height:24px;width:28px;padding:0;justify-content:center" title="Zoom out (Ctrl -)" aria-label="Zoom out">−</button>
+                  <span class="num w-11 text-center" x-text="Math.round((zoomLevel || 1) * 100) + '%'"></span>
+                  <button type="button" @click="zoomStep(1)" class="kl-btn" style="height:24px;width:28px;padding:0;justify-content:center" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+                  <button type="button" @click="zoomReset()" class="kl-btn quiet" style="height:24px" :disabled="(zoomLevel || 1) === 1" title="Back to 100% (Ctrl 0)">Reset</button>
+                </div>
+                <button type="button" role="menuitem" x-show="canOpenInBrowser()" @click="openInBrowser()" class="w-full text-left px-3 py-1.5 hover:bg-head">Open in browser</button>
+              </div>
+            </template>
+            <template x-if="acct && acct.sign_in_on && acct.username">
+              <div data-testid="help-account">
+                <div class="my-1 border-t border-bd"></div>
+                <div class="px-3 py-1 text-xs text-muted">Signed in as <span class="text-fg font-medium" x-text="acct.username"></span></div>
+                <button type="button" role="menuitem" x-show="!viaHa()" @click="helpMenu = false; signOutHere()" class="w-full text-left px-3 py-1.5 hover:bg-head">Sign out</button>
+              </div>
+            </template>
+          </div>
+        </div>
+        <button @click="openSettings()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Settings" aria-label="Settings"><i class="ic ic-settings"></i></button>
+      </div>
+    </header>
+
+    <!-- Tabs, then status chips. Chips never break inside; when there is no room the whole group
+         wraps to a second row (zoom, big text, many repos) instead of running off the edge. -->
+    <nav class="kl-chrome shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
+      <!-- Drag a tab to reorder (kopia repositories); right-click for Reset tab order. -->
+      <div x-show="!noRepos" data-tour="tabs" class="relative flex flex-wrap items-center gap-1" @click.outside="tabMenu = false" @contextmenu.prevent="if (repoKind === 'kopia') tabMenu = !tabMenu">
+        <template x-for="t in currentTabs()" :key="t.id">
+          <button class="tab" @click="active=t.id; activate()" :title="t.tip || ''" :draggable="repoKind === 'kopia' ? 'true' : 'false'"
+                  @dragstart="tabDrag = t.id; $event.dataTransfer.effectAllowed = 'move'" @dragend="tabDrag = ''; tabOver = ''"
+                  @dragover.prevent="if (tabDrag) tabOver = t.id" @drop.prevent="tabDrop(t.id)"
+                  :class="[(active===t.id || (t.id==='snapshots' && active==='simulate')) ? 'on' : 'hover:bg-head',
+                           tabDrag === t.id ? 'opacity-50' : '', tabOver === t.id && tabDrag && tabDrag !== t.id ? 'ring-1 ring-fg' : '']"
+                  x-text="t.label + (t.id === 'tasks' && tasksRunning ? ' (' + tasksRunning + ')' : '')"></button>
+        </template>
+        <div x-show="tabMenu" x-cloak role="menu" class="kl-menu" style="left:0;right:auto" data-testid="tab-menu">
+          <div class="hd">Drag a tab to move it</div>
+          <button type="button" @click="resetTabOrder()" :disabled="!tabOrder.length" class="disabled:opacity-50">Reset tab order</button>
+        </div>
+      </div>
+      <div class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs pr-2 min-w-0 max-w-full">
+        <span x-show="indexPause.paused" class="rounded px-1.5 py-0.5 border border-warn-bd text-warn whitespace-nowrap"
+              :title="pauseText() + '. Automatic indexing waits; Index still runs when you start it.'">
+          Indexing paused · <button @click="resumeIndexing()" class="underline">Resume</button>
+        </span>
+        <span x-show="engine && engine.pause && engine.pause.on" x-cloak class="rounded px-1.5 py-0.5 border border-warn-bd text-warn whitespace-nowrap"
+              :title="'Scheduled backups and maintenance by KopiaLens wait ' + enginePauseText(engine && engine.pause) + '.'">
+          Backups paused · <button @click="engineResume(null)" class="underline">Resume</button>
+        </span>
+        <template x-for="f in freshness.filter((x) => !isDemo(x.repo))" :key="f.repo">
+          <span class="rounded px-1.5 py-0.5 border whitespace-nowrap"
+                :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"
+                :title="freshTitle(f)">
+            <span x-text="repoLabel(f.repo)"></span>
+            <span x-text="' · ' + freshAge(f)"></span>
+            <span x-show="f.pending" x-text="' · queued'"></span>
+            <span x-show="f.error" class="text-danger">!</span>
+          </span>
+        </template>
+        <span x-show="busy" class="text-warn" x-text="busy"></span>
+        <!-- the full error on hover: the line itself must stay short, a long backend message must not -->
+        <span x-show="error" class="text-danger max-w-md truncate" :title="error" x-text="error"></span>
+        <span class="text-muted whitespace-nowrap truncate max-w-full" x-show="navSource()" x-text="midTrunc(navSource(), 34)" :title="'Source: ' + navSource()"></span>
+      </div>
+    </nav>
+

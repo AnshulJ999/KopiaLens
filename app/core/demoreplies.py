@@ -1,0 +1,127 @@
+"""Recorded kopia replies for demo repos.
+
+A demo repo has no kopia behind it. ``app.core.demo`` runs the read commands screens need once
+against the real repo, fakes every name in the output and saves it here; the kopia wrapper
+answers a demo repo from this file and never starts a process.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+import os
+import re
+import threading
+
+from config import DATA_DIR, DEMO_REAL_PATHS, HERE
+
+# Shown in commands generated for a demo repo. It does not exist, and kopia.py refuses any
+# command that carries it.
+UNAVAILABLE = "Not available in the demo."
+# Stand-ins for this PC's own folders in a demo instance's replies, in this OS's path style.
+if os.name == "nt":
+    DISPLAY_CONFIG = r"C:\Users\demo\AppData\Roaming\kopia\repository.config"
+    _DISPLAY = ((DATA_DIR, r"C:\Users\demo\AppData\Local\KopiaLens"),
+                (HERE, r"C:\Program Files\KopiaLens"),
+                (os.path.expanduser("~"), r"C:\Users\demo"))
+else:
+    DISPLAY_CONFIG = "/home/demo/.config/kopia/repository.config"
+    _DISPLAY = ((DATA_DIR, "/home/demo/.local/share/kopialens"),
+                (HERE, "/opt/kopialens"),
+                (os.path.expanduser("~"), "/home/demo"))
+if DEMO_REAL_PATHS:   # a balanced copy shows the real folders; only its own data folder is hidden
+    _DISPLAY = _DISPLAY[:1]
+
+_LOCK = threading.Lock()
+_CACHE: dict[str, dict] = {}
+
+
+def machine_paths(own_only: bool = False) -> list[str]:
+    """This PC's own folders in every spelling a reply can carry (raw, escaped once or twice,
+    forward slashes), lowercased, longest first. ``own_only``: just the data folder, as a
+    balanced copy shows the rest."""
+    return [p.lower() for p, _d in _variants(own_only)]
+
+
+@functools.lru_cache(maxsize=2)
+def _variants(own_only: bool = False) -> tuple[tuple[str, str], ...]:
+    out = []
+    for real, shown in sorted(_DISPLAY[:1] if own_only else _DISPLAY, key=lambda p: -len(p[0])):
+        real = os.path.normpath(real)
+        if len(real) <= 3:   # never rewrite a bare drive
+            continue
+        # Backslashes x4 (a path in an error message, then JSON), x2 (JSON), x1, and forward.
+        for n in (4, 2, 1):
+            out.append((real.replace("\\", "\\" * n), shown.replace("\\", "\\" * n)))
+        out.append((real.replace("\\", "/"), shown.replace("\\", "/")))
+    return tuple(dict.fromkeys(out))
+
+
+def scrub(body: bytes) -> bytes:
+    """Replace this PC's own folders with stand-ins (a demo instance's replies)."""
+    for real, shown in _variants():
+        body = re.sub(re.escape(real.encode()), lambda _m, s=shown.encode(): s, body, flags=re.I)
+    return body
+
+
+def replies_path(repo: str, base: str | None = None) -> str:
+    return os.path.join(base or DATA_DIR, f"demo_replies_repo{repo}.json")
+
+
+def key(args: list[str]) -> str:
+    """Canonical lookup key: ``policy export`` writes to a caller-chosen temp file, so the file
+    arguments are not part of what was asked."""
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a == "--to-file":
+            skip = True
+            continue
+        if a in ("--overwrite", "--no-progress"):
+            continue
+        out.append(str(a))
+    return json.dumps(out)
+
+
+def _load(repo: str) -> dict:
+    from .filecrypto import read_text   # the Full encryption level encrypts this file
+    with _LOCK:
+        if repo not in _CACHE:
+            path = replies_path(repo)
+            text = read_text(path)
+            if text is None and os.path.isfile(path):
+                return {}   # can't be decrypted yet (index locked): read it again next time
+            try:
+                _CACHE[repo] = json.loads(text) if text else {}
+            except ValueError:
+                _CACHE[repo] = {}
+        return _CACHE[repo]
+
+
+_BACKEND = None
+
+
+def set_backend(fn) -> None:
+    """Answer demo repos with ``fn(repo, args) -> (rc, out, err)`` instead of the recordings
+    (the sample-data build, where a generated model plays kopia); ``None`` restores them."""
+    global _BACKEND
+    _BACKEND = fn
+
+
+def reply(repo: str, args: list[str]) -> tuple[int, str, str]:
+    """(returncode, stdout, stderr) for one recorded command."""
+    if _BACKEND is not None:
+        rc, out, err = _BACKEND(repo, args)
+    else:
+        rec = _load(repo).get(key(args))
+        if rec is None:
+            return 1, "", UNAVAILABLE
+        rc, out, err = int(rec.get("rc", 0)), rec.get("out", ""), rec.get("err", "")
+    if "--to-file" in args:
+        target = args[args.index("--to-file") + 1]
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        out = ""
+    return rc, out, err

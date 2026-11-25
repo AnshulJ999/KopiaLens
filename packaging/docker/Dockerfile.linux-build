@@ -1,0 +1,29 @@
+# The Linux x64 release build on the maintainer's PC, with the same base and tools as the
+# GitHub job: Ubuntu 22.04 for the oldest supported glibc, the same Python build, Tauri CLI and Nuitka.
+# No source goes in the image; the release script pipes a clean export of the commit into the container.
+FROM ubuntu:22.04
+
+ARG PYTHON_VERSION=3.13.18
+ARG PYTHON_URL=https://github.com/actions/python-versions/releases/download/3.13.18-40336726450/python-3.13.18-linux-22.04-x64.tar.gz
+ARG TAURI_CLI_VERSION=2.12.1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git xz-utils pkg-config xdg-utils desktop-file-utils rpm \
+      libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev \
+      build-essential file patchelf ccache
+
+# GitHub's own Python build, at the path it expects.
+ENV PYTHON_HOME=/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64
+ENV LD_LIBRARY_PATH=${PYTHON_HOME}/lib
+ENV PATH=${PYTHON_HOME}/bin:/usr/local/cargo/bin:${PATH}
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+RUN mkdir -p "$PYTHON_HOME" && curl -fsSL "$PYTHON_URL" | tar -xz -C "$PYTHON_HOME" \
+    && ln -sf python3.13 "$PYTHON_HOME/bin/python" \
+    && python -m ensurepip && python -m pip install --quiet --upgrade pip
+
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+    && cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked \
+    && rm -rf "$CARGO_HOME/registry"
+
+# AppImage tools run without FUSE, which a container doesn't have.
+ENV APPIMAGE_EXTRACT_AND_RUN=1

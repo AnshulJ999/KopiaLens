@@ -1,0 +1,245 @@
+// Backblaze view: state, lifecycle + file detail. All keys are bz-prefixed and BZ hits ONLY
+// /api/backblaze/* (never the kopia/DuckDB routes). Reuses the shared helpers from util.js
+// (fmtBytes, humanTime, timeCell, sourcePath, getJson, setTable) plus the bz-local helpers below.
+  const bzFmt = (v) => fmtBytes(v);
+  const bzAge = (ts) => {
+    const d = Math.max(0, Date.now() / 1000 - Number(ts || 0));
+    return d < 60 ? "just now" : d < 3600 ? `${Math.round(d / 60)}m ago` : d < 86400 ? `${Math.round(d / 3600)}h ago` : `${Math.round(d / 86400)}d ago`;
+  };
+  // The Diff cell: green at +0, quiet when the queue explains the gap, red only when it doesn't.
+  const bzDiffHtml = (v, row) => {
+    if (v == null || v === undefined) return "—";
+    const n = Number(v);
+    if (n === 0) return `<span class="text-ok" title="Backblaze and KopiaLens agree">+0</span>`;
+    const txt = (n > 0 ? "+" : "") + n.toLocaleString(NUM_LOCALE);
+    const queued = Number((row && row.queue_files) || 0);
+    if (n > 0 && queued && n <= queued) {
+      return `<span class="text-muted" title="${escHtml(countOf(queued, 'file'))} waiting to upload">${txt}</span>`;
+    }
+    return `<span class="text-danger" title="KopiaLens's count and Backblaze's own count disagree">${txt}</span>`;
+  };
+  // Pill colours from the theme, so they follow light and dark themes.
+  const bzPill = (tone, label) => {
+    const t = { ok: "ok", danger: "danger", warn: "warn", accent: "accent" }[tone];
+    const style = t ? `background:var(--${t}-bg);color:var(--${t})` : "background:var(--sel);color:var(--fg)";
+    return `<span class="pill" style="${style}">${label}</span>`;
+  };
+  const statusPill = (s) => {
+    const m = { backed: ["ok", "backed up"], excluded: ["danger", "excluded"], mixed: ["warn", "mixed"], drive: ["", "drive"] };
+    const [tone, label] = m[s] || ["", s];
+    return bzPill(tone, label);
+  };
+  const reposBadges = (arr) => (arr || []).map((r) => bzPill({ "1": "accent", "bz": "danger" }[r] || "", r)).join("");
+  // Backblaze defines categories internally (no on-disk map), so these are sensible hardcoded sets.
+  const CAT_EXT = {
+    video: "mp4,mkv,mov,avi,wmv,flv,m4v,mpg,mpeg,webm,3gp,m2ts,mts,vob,ogv,divx,rm,rmvb,asf,ts",
+    music: "mp3,flac,wav,aac,m4a,ogg,wma,aiff,aif,alac,ape,opus,mid,midi,amr",
+    pict: "jpg,jpeg,png,gif,bmp,tiff,tif,heic,heif,webp,raw,cr2,cr3,nef,arw,dng,orf,rw2,psd,svg,ico",
+    docs: "pdf,doc,docx,txt,rtf,odt,pages,md,tex,wpd,epub,mobi,azw3",
+    spreadsheets: "xls,xlsx,csv,ods,numbers,tsv",
+    presentations: "ppt,pptx,odp,key",
+    zips: "zip,rar,7z,gz,tar,bz2,xz,tgz,iso,cab,arj,z",
+    email: "eml,msg,pst,ost,mbox",
+  };
+  const fmtBzDate = (s) => {  // 'YYYYMMDD' (or longer) -> 'Apr 20, 2026'
+    s = String(s || "");
+    const m = s.match(/^(\d{4})(\d{2})(\d{2})/);
+    if (!m) return s;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    return isNaN(dt.getTime()) ? s : fmtDate(dt);
+  };
+
+const bzIndexPart = {
+    // ---- BZ state ----
+    bzTabs: [
+      { id: "bz-dashboard", label: "Dashboard" }, { id: "bz-search", label: "Search" },
+      { id: "bz-tree", label: "Tree" }, { id: "bz-excluded", label: "Excluded" },
+      { id: "bz-exclusions", label: "Exclusions" }, { id: "bz-churn", label: "Churn" },
+      { id: "bz-queue", label: "Queue" }, { id: "bz-sessions", label: "Sessions" },
+      { id: "bz-health", label: "Health" },
+    ],
+    bzStatus: { built: false, building: false, total_files: 0, backed_files: 0 },
+    bzStats: null, bzOverview: null,
+    bzChurnRows: [], bzChurnTotal: 0, bzChurnActiveOnly: true, _bzChurnAll: [],
+    bzChurnDepth: 2, bzChurnCollapse: true, bzChurnDrive: "", bzImportMsg: "",
+    bzSearchDrive: "", bzSearchExt: "", bzSearchExtExclude: "", bzSearchStatus: "all",
+    bzSearchSort: "size", bzSearchDir: "desc", bzSearchTotal: 0, bzSearchPage: 1, bzSearchPageSize: "500",
+    bzGroupByFolder: false, bzGroupDepth: 2, bzSearchMeta: "",
+    bzTreeDrive: "", bzTreePrefix: "",
+    bzExclPath: "", bzExclFilter: "all", bzExclMeta: "", _bzExclItems: [], _bzExclSeq: 0,
+    _bzSearchSeq: 0, _bzTreeSeq: 0,
+    bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
+    bzGen: null, bzShowGen: false, bzRefreshResult: "",
+    bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
+    bzDetail: null, bzDrives: [], _bzPoll: null, bzRebuilding: false,
+
+    // ---- lifecycle ----
+    bzApplySettings(kl) {  // restore persisted BZ prefs (called from app.js init with the kopialens settings)
+      if (kl.bz_tree_drive) this.bzTreeDrive = kl.bz_tree_drive;
+      if (kl.bz_queue_depth) this.bzQueueDepth = Number(kl.bz_queue_depth);
+      if (kl.bz_churn_depth) this.bzChurnDepth = Number(kl.bz_churn_depth);
+      if (kl.bz_churn_collapse !== undefined) this.bzChurnCollapse = !!kl.bz_churn_collapse;
+      if (kl.bz_queue_collapse !== undefined) this.bzQueueCollapse = !!kl.bz_queue_collapse;
+    },
+    async bzInit() {
+      await this.wrap(async () => {
+        await this.bzRefreshStatus();
+        if (this.bzStatus.folder_change_pending) this.bzRebuilding = true;
+        if (this.bzStatus.building) this.bzPollRefresh();  // a bg-cycle refresh was already in flight
+        else if (this.bzStatus.folder_change_pending) this.bzPollRefresh(true);
+        await this.bzLoadDashboard();
+      }, "Loading Backblaze…");
+    },
+    bzActivate() {
+      switch (this.active) {
+        case "bz-dashboard": return this.bzLoadDashboard();
+        case "bz-search": return this.bzLoadSearch();
+        case "bz-tree": return this.bzOpenTree();
+        case "bz-excluded": return this.bzLoadExcluded();
+        case "bz-exclusions": return this.bzLoadExclusions();
+        case "bz-churn": return this.bzLoadChurn();
+        case "bz-queue": return this.bzLoadQueue();
+        case "bz-sessions": return this.bzLoadSessions();
+        case "bz-health": return this.bzLoadHealth();
+      }
+    },
+    async bzRefreshStatus() {
+      const s = await getJson("/api/backblaze/status").catch(() => null);
+      if (s) this.bzStatus = s;
+    },
+    bzRebuildInProgress() {
+      return this.bzRebuilding || !!(this.bzStatus && (this.bzStatus.rebuild_queued || this.bzStatus.folder_change_pending));
+    },
+    bzWaiting() {   // another computer's folder before its first finished scan
+      const s = this.bzStatus || {};
+      return !!s.waiting_for_scan && !s.built && !s.building;
+    },
+    bzStatusLine() {
+      const s = this.bzStatus;
+      if (s.building || this.bzRebuildInProgress()) return "Indexing Backblaze…";
+      if (this.bzWaiting()) return "BZ: waiting for its first scan";
+      if (!s.built) return "BZ: not indexed";
+      // Remaining to upload - the "is my backup done" number (2026-09-13). The backed/on-disk
+      // counts live in the tooltip (bzStatusTitle); they are identity stats, not actions.
+      const r = s.remaining || {};
+      if (r.remaining_files == null && r.remaining_bytes == null) return "BZ";
+      if (!Number(r.remaining_files) && !Number(r.remaining_bytes)) return "Nothing to upload";
+      return `To upload: ${fmtBytes(Number(r.remaining_bytes || 0))} · ${countOf(r.remaining_files, "file")} left`;
+    },
+    bzStatusTitle() {
+      const s = this.bzStatus;
+      const parts = [];
+      if (s.built) {
+        parts.push(`${Number(s.backed_files || 0).toLocaleString(NUM_LOCALE)} backed`);
+        parts.push(`${Number(s.total_files || 0).toLocaleString(NUM_LOCALE)} on disk`);
+      }
+      const ts = Number(s.last_check_ts || 0);
+      if (ts) {
+        const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+        parts.push("checked for changes " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+      }
+      const scan = Number(s.last_scan || 0);
+      if (scan) parts.push("Backblaze's last scan " + bzAge(scan));
+      return parts.join(" · ");
+    },
+    async bzRefresh() {
+      // Non-blocking: the refresh runs in a subprocess worker (~4 min), so this only starts it and
+      // returns immediately - bzPollRefresh() watches /status and reloads the active tab when done.
+      await this.wrap(async () => {
+        const r = await getJson("/api/backblaze/refresh", { method: "POST" });
+        await this.bzRefreshStatus();
+        if (r && r.started !== false) this.bzPollRefresh();
+      }, "Starting Backblaze refresh…");
+    },
+    bzPollRefresh(waitForStart = false) {
+      if (this._bzPoll) clearInterval(this._bzPoll);
+      let seenBuilding = false;
+      this._bzPoll = setInterval(async () => {
+        try {
+          await this.bzRefreshStatus();
+          if (this.bzStatus.building) seenBuilding = true;
+          if (!this.bzStatus.building) {
+            // A user-changed folder is queued: keep waiting for the heavy slot (a kopia pass may be
+            // running) instead of calling "not building" done.
+            if (waitForStart && !seenBuilding && !this.bzStatus.last_error
+                && (this.bzStatus.folder_change_pending || this.bzStatus.rebuild_queued)) return;
+            clearInterval(this._bzPoll); this._bzPoll = null;
+            this.bzRebuilding = false;
+            // Own status slot, NOT this.error: wrap() clears this.error on entry, so a failure
+            // message set here was wiped by the very next tab activation. Stale data still beats
+            // no data, but the user must see that it happened.
+            if (this.bzStatus.last_error) {
+              this.bzRefreshResult = `Couldn't index Backblaze: ${this.bzStatus.last_error}. Showing the last index.`;
+            } else {
+              this.bzRefreshResult = "Backblaze indexed " + humanTime(Date.now());
+            }
+            if (String(this.active).startsWith("bz-")) await this.bzActivate();
+          }
+        } catch (e) { /* transient fetch error - ignore and let the next 3s tick retry */ }
+      }, 3000);
+    },
+    async bzAfterFolderChange() {
+      // Only a user-changed folder does this: a background refresh stays quiet. Old drive filters
+      // would point at drives that no longer exist, and the old rows are another folder's.
+      this.bzSearchDrive = ""; this.bzChurnDrive = ""; this.bzExclPath = ""; this.bzExclFilter = "all";
+      this._bzExclItems = []; this.bzTreeDrive = ""; this.bzTreePrefix = "";
+      this.bzSearchPage = 1; this.bzRefreshResult = ""; this.bzRebuilding = true;
+      await this.bzRefreshStatus();
+      this.bzPollRefresh(true);
+    },
+
+    // ---- paths: the data's own separator ("\\" Windows, "/" Mac) and its volumes ----
+    bzSep() { return this.bzStatus.sep || "\\"; },
+    bzVol(key) { return (this.bzStatus.drives || []).find((d) => d.drive === key) || null; },
+    bzLabel(key) { const v = this.bzVol(key); return v ? v.label : (key ? key + ":" : ""); },
+    bzRoot(key) { const v = this.bzVol(key); return v ? v.root : key + ":\\"; },
+    bzDriveWidth() { return this.bzSep() === "/" ? 210 : 70; },
+    bzTableId(name) { return this.bzSep() === "/" ? name + "Mac" : name; },   // a Mac's wider Drive column keeps its own saved layout
+    bzDriveSorter() {   // the data's own volume order ("/" first on a Mac), not the key's
+      const idx = (k) => { const i = (this.bzStatus.drives || []).findIndex((d) => d.drive === k); return i < 0 ? 999 : i; };
+      return (a, b) => idx(a) - idx(b);
+    },
+    bzCross() { return this.bzStatus.this_computer !== false; },   // another computer's data: no Kopia cross-check
+    bzVolOf(path) {   // the volume a path is on (longest matching root)
+      const p = String(path || "").toLowerCase(); let best = null, len = -1;
+      for (const d of (this.bzStatus.drives || [])) {
+        const r = String(d.root || "").toLowerCase(); const bare = r.length > 1 ? r.slice(0, -1) : r;
+        if ((p.startsWith(r) || p === bare) && r.length > len) { best = d.drive; len = r.length; }
+      }
+      if (best === null && this.bzSep() === "\\" && p.length > 1 && p[1] === ":") best = p[0].toUpperCase();
+      return best;
+    },
+    bzJoin(base, name) { const s = this.bzSep(); let b = base || ""; while (b.endsWith(s)) b = b.slice(0, -1); return b + s + name; },
+    bzCrumbs(path) {   // [{label, prefix}] from the volume root down
+      const s = this.bzSep(); const out = [];
+      if (!path) return out;
+      const key = this.bzVolOf(path);
+      const root = key !== null ? this.bzRoot(key) : path.split(s)[0] + s;
+      out.push({ label: key !== null ? this.bzLabel(key) : (path.split(s)[0] || s), prefix: root });
+      let acc = root;
+      path.slice(Math.min(root.length, path.length)).split(s).filter(Boolean).forEach((seg) => {
+        acc = acc + (acc.endsWith(s) ? "" : s) + seg; out.push({ label: seg, prefix: acc });
+      });
+      return out;
+    },
+    bzGenFolder(full) {   // Windows folder rules are relative to the drive; a Mac's are full paths
+      const s = this.bzSep(); let f = full || "";
+      if (s === "\\" && f.length > 2 && f[1] === ":") f = f.slice(2);
+      while (f.endsWith(s)) f = f.slice(0, -1);
+      this.bzOpenGen("folder", f + s);
+    },
+    bzGenName(name) {
+      if (this.bzSep() === "/") return this.bzOpenGen("editable_contains", "/" + name + "/");
+      this.bzOpenGen("folder", "\\" + name + "\\");
+    },
+
+    // ---- file detail ----
+    async bzOpenDetail(item) {
+      this.bzDetail = { ...item, gen: null };
+    },
+    bzDetailRoot() {
+      if (!this.bzDetail) return "";
+      const f = this.bzDetail.full_path || "";
+      return this.bzSep() === "\\" && f.length > 2 && f[1] === ":" ? f.slice(2) : f;
+    },
+};

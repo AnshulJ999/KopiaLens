@@ -1,0 +1,32 @@
+            <section x-show="settingsTab==='updates'" x-effect="(settingsTab==='updates' || settingsSearching) && loadUsagePreview()" class="space-y-4" data-testid="settings-updates">
+              <p class="text-[0.6875rem] text-muted">KopiaLens checks for a newer version once a day. Usage stats tell us how many people use it and which features matter. With both off, nothing is sent unless you click Check now.</p>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="update_check">Check for updates</span>
+                  <button @click="updateCheck = !updateCheck; saveKl('update_check')" class="h-8 rounded border border-bd px-3" x-text="updateCheck ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Sends the KopiaLens version, update channel, install type, operating system and whether usage stats are on.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="update_channel">Update channel</span>
+                  <select autocomplete="off" x-model="updateChannel" @change="saveKl('update_channel')" class="fld border border-bd bg-surface2" data-testid="update-channel">
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Beta offers test versions early. They may have more bugs.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="usage_stats">Anonymous usage stats</span>
+                  <button @click="usageStats = !usageStats; saveKl('usage_stats')" class="h-8 rounded border border-bd px-3" x-text="usageStats ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Adds a random install id, Free or Pro, how many repositories and which storage types, the names of features used, your kopia version, and rough size classes of KopiaLens's index and this computer's memory. Never paths, file names or anything from your backups.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span class="font-medium">What's sent</span>
+                  <button class="kl-btn" @click="loadUsagePreview()">Refresh</button></div>
+                <pre class="kl-term mt-1 max-h-60 whitespace-pre-wrap"
+                     x-text="!usagePreview ? 'Loading…' : (usagePreview.error ? 'Couldn\'t load it.' : (usagePreview.sends ? JSON.stringify(usagePreview.payload, null, 2) : 'Nothing: both are off.'))"></pre>
+                <p class="text-[0.6875rem] text-muted mt-1">Your IP address is never stored. An install not seen for 90 days is deleted.</p>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-xs" x-text="update().checked_at ? 'Last checked ' + freshTime(new Date(update().checked_at * 1000).toISOString()) : 'Not checked yet'"></span>
+                <button class="kl-btn" @click="checkUpdatesNow()" :disabled="checkingUpdates" x-text="checkingUpdates ? 'Checking…' : 'Check now'"></button>
+              </div>
+            </section>

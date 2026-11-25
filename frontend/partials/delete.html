@@ -1,0 +1,267 @@
+{% from "partials/_macros.html" import dryresult, rulediff, flowsteps %}
+
+    <!-- Delete panel (files). Stacks over the detail modal, under the shared confirm. Shared delete
+         layout: header, choices, cards, list, run bar (no red button), footer with the one red button. -->
+    <div x-show="showDel" @click.self="closeDelete()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="delPanel">
+        <div class="w-[54rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium" x-text="delTitle()"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files')" @keydown.enter.prevent="openDocs('delete-files')" title="Removing files from your snapshots">?</span>
+              <button @click="closeDelete()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+            </div>
+            <template x-if="delPanel.flow">{{ flowsteps(2) }}</template>
+            <div class="kl-note mt-0.5 break-all font-mono" x-text="delPathLine()"></div>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div class="kl-list" style="max-height:96px" x-show="delPanel.files.length > 1">
+              <template x-for="(f, i) in delPanel.files" :key="i">
+                <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-text="shortSource(f.source)"></span></div>
+              </template>
+            </div>
+            <div class="kl-choices">
+              <div>
+                <div class="lbl">How</div>
+                <span class="kl-seg">
+                  <span :class="delPanel.method === 'remove' ? 'on' : ''" @click="delSetMethod('remove')" title="Snapshots stay. Only these files go.">Remove from snapshots</span>
+                  <span :class="delPanel.method === 'snapshots' ? 'on' : ''" @click="delSetMethod('snapshots')" title="Whole snapshots go, with every other file in them.">Delete snapshots</span>
+                </span>
+              </div>
+              <div x-show="delPanel.method === 'remove'">
+                <div class="lbl">Match by</div>
+                <span class="kl-seg">
+                  <span :class="delPanel.by === 'object-id' ? 'on' : ''" @click="delSetBy('object-id')" title="The same bytes, at any path">Exact content<span class="num" x-show="delByFig('object-id')" x-text="' · ' + delByFig('object-id')"></span></span>
+                  <span :class="delPanel.by === 'filename' ? 'on' : ''" @click="delSetBy('filename')" title="Any file with this name">File name<span class="num" x-show="delByFig('filename')" x-text="' · ' + delByFig('filename')"></span></span>
+                </span>
+              </div>
+              <div x-show="delPanel.plan && delCandidates().length > 1">
+                <div class="lbl">In</div>
+                <span class="kl-seg">
+                  <span :class="!delPanel.every ? 'on' : ''" @click="delSetEvery(false)">These sources</span>
+                  <span :class="delPanel.every ? 'on' : ''" @click="delSetEvery(true)" title="Every source that holds these files or the same content">Every source</span>
+                </span>
+              </div>
+              <label class="flex items-center gap-1.5 text-xs cursor-pointer" x-show="delPanel.method === 'snapshots'" title="Also delete snapshots holding identical copies at other paths">
+                <input autocomplete="off" type="checkbox" :checked="delPanel.copies" @change="delToggleCopies()"> Include identical copies
+              </label>
+            </div>
+
+            <div class="kl-note" x-show="delPanel.loading">Checking what this touches…</div>
+            <div class="kl-callout" x-show="delPanel.error" x-text="delPanel.error"></div>
+
+            <template x-if="delPanel.plan && !delPanel.loading">
+              <div class="space-y-4">
+                <div class="kl-sec" x-show="!delPanel.every && delCandidates().length > 1">
+                  <div class="h">Sources <span class="count" x-text="delScopeSources().length + ' of ' + delCandidates().length + ' ticked'"></span></div>
+                  <div class="kl-list" style="max-height:132px">
+                    <template x-for="c in delCandidates()" :key="c.source">
+                      <label class="li cursor-pointer">
+                        <input autocomplete="off" type="checkbox" class="shrink-0" :checked="delTicked(c.source)" @change="delToggleSource(c.source)">
+                        <span class="font-mono break-all grow" x-text="shortSource(c.source)"></span>
+                        <span class="pill shrink-0" :class="c.holds ? 'ok' : ''" x-text="c.holds ? 'holds it' : 'same content'"
+                              :title="c.holds ? 'Backs up this path' : 'Holds identical content at another path'"></span>
+                      </label>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- remove from snapshots -->
+                <template x-if="delPanel.method === 'remove'">
+                  <div class="space-y-4">
+                    <div class="kl-cards five">
+                      <div class="kl-card"><div class="k">Files</div><div class="v" x-text="Number(delPanel.plan.match_total || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card" :class="delPanel.plan.other_count ? 'warn' : ''"><div class="k" :title="delPanel.by === 'filename' ? 'Files outside the selection with the same names, removed too' : 'The same content at other paths, removed too'" x-text="delPanel.by === 'filename' ? 'Other same-named' : 'Identical copies'"></div><div class="v" x-text="Number(delPanel.plan.other_count || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(delPanel.plan.versions || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div><div class="v" x-text="delPanel.statsLoading ? '…' : (delPanel.stats ? fmtPhys(delPanel.stats.freeable) : '—')"></div></div>
+                      <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="delScopeSources().length"></div></div>
+                    </div>
+                    <div class="kl-callout" x-show="delCallout()" x-text="delCallout()"></div>
+                    <div class="kl-sec">
+                      <div class="h">What gets removed <span class="count" x-text="delPanel.plan.capped ? ('first ' + delPanel.plan.matches.length + ' of ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE)) : countOf(delPanel.plan.matches.length, 'path')"></span>
+                        <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="delPanel.plan.matches.length" @click="delShowAll()" data-testid="del-show-all"
+                          x-text="delPanel.plan.capped ? 'Show all ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE) : 'Show as a table'"></button></span></div>
+                      <div class="kl-list" style="max-height:220px">
+                        <template x-for="(m, i) in delPanel.plan.matches" :key="i">
+                          <div class="li">
+                            <span class="font-mono break-all grow" x-text="m.full_path"></span>
+                            <span class="pill warn shrink-0" x-show="delRowTag(m)" x-text="delRowTag(m)"></span>
+                            <span class="pill shrink-0" x-show="!m.in_latest" title="No longer on disk">deleted from disk</span>
+                            <span class="kl-note shrink-0" :title="fileSourcesTip(m)" x-text="fileSources(m)"></span>
+                            <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(m.size)"></span>
+                          </div>
+                        </template>
+                        <div class="li" style="color:var(--muted)" x-show="!delPanel.plan.matches.length">Nothing matches in these sources</div>
+                      </div>
+                    </div>
+                    <div class="kl-sec" x-show="delPanel.by === 'filename' && delPanel.stats && delPanel.stats.kept_count">
+                      <div class="h">Identical files with other names <span class="count" x-text="delPanel.stats ? countOf(delPanel.stats.kept_count, 'file') + ' · keep ' + fmtPhys(delPanel.stats.kept) + ' stored' : ''"></span></div>
+                      <div class="kl-list" style="max-height:132px">
+                        <template x-for="(m, i) in ((delPanel.stats && delPanel.stats.kept_files) || [])" :key="i">
+                          <div class="li">
+                            <span class="font-mono break-all grow" x-text="m.full_path"></span>
+                            <span class="kl-note shrink-0" :title="fileSourcesTip(m)" x-text="fileSources(m)"></span>
+                            <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(m.size)"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- delete snapshots -->
+                <template x-if="delPanel.method === 'snapshots'">
+                  <div class="space-y-4">
+                    <div class="kl-cards">
+                      <div class="kl-card"><div class="k">Snapshots</div><div class="v" x-text="(delPanel.plan.snapshots || []).length"></div></div>
+                      <div class="kl-card" :class="delPanel.plan.pinned_count ? 'warn' : ''"><div class="k">Pinned</div><div class="v" x-text="delPanel.plan.pinned_count"></div></div>
+                      <div class="kl-card" :class="delPanel.plan.retained_count ? 'warn' : ''"><div class="k" title="Kept by a retention rule">Kept by retention</div><div class="v" x-text="delPanel.plan.retained_count"></div></div>
+                      <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="delScopeSources().length"></div></div>
+                    </div>
+                    <div class="kl-callout" x-text="delCallout()"></div>
+                    <div class="kl-callout" x-show="delPanel.plan.capped">Too many identical copies to list every snapshot. Untick sources, or remove the file from snapshots instead.</div>
+                    <div class="kl-sec">
+                      <div class="h">Snapshots deleted <span class="count" x-text="(delPanel.plan.snapshots || []).length + ', newest first'"></span></div>
+                      <div class="kl-list" style="max-height:220px">
+                        <template x-for="s in (delPanel.plan.snapshots || [])" :key="s.snapshot_id">
+                          <div class="li">
+                            <span class="num shrink-0" style="width:9.5rem" x-text="humanTime(s.start_time)"></span>
+                            <span class="font-mono break-all grow" x-text="shortSource(s.source)"></span>
+                            <span class="pill warn shrink-0" x-show="s.pinned">pinned</span>
+                            <span class="pill warn shrink-0" x-show="(s.retention || []).length" x-text="'kept: ' + (s.retention || []).join(', ')"></span>
+                            <span class="kl-note shrink-0" x-show="s.paths.length > 1" x-text="s.paths.length + ' paths'"></span>
+                            <span class="font-mono kl-note shrink-0" x-text="s.snapshot_id.slice(0, 8)"></span>
+                          </div>
+                        </template>
+                        <div class="li" style="color:var(--muted)" x-show="!(delPanel.plan.snapshots || []).length">No current snapshot holds this</div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <div class="kl-runbar">
+                  <button class="kl-btn" @click="delDry($event)" :disabled="delPanel.dry.running || !delReady()">
+                    <span x-text="delPanel.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span>
+                  </button>
+                  <span x-show="delDryChecked()" class="pill ok">dry run checked</span>
+                  <span class="grow"></span>
+                  <button class="kl-btn quiet" @click="delCopyCommand($event)" x-show="delPanel.plan.command || proTag(delFeature())">Copy command <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span></button>
+                  <button class="kl-btn quiet" x-show="delPanel.plan.command" @click="delPanel.showCmd = !delPanel.showCmd" x-text="delPanel.showCmd ? 'Hide command' : 'Show command'"></button>
+                </div>
+                <template x-if="delPanel.showCmd">
+                  <div class="kl-term" style="max-height:130px">
+                    <div class="flex justify-end"><button class="kl-btn quiet" style="height:22px" @click="copyText(delPanel.plan.command)">Copy</button></div>
+                    <div class="break-all whitespace-pre-wrap" x-text="delPanel.plan.command"></div>
+                  </div>
+                </template>
+                {{ dryresult('delPanel.dry') }}
+              </div>
+            </template>
+          </div>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Space comes back after the next full maintenance.</span>
+            <span class="spacer"></span>
+            <template x-if="!delPanel.flow">
+              <span class="flex items-center gap-2">
+                <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
+                <button class="kl-btn" @click="closeDelete()">Cancel</button>
+                <button class="kl-btn danger" @click="delExecute($event)" :disabled="!delReady() || delPanel.dry.running || !!wmOff('full')"><span x-text="delConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span></button>
+              </span>
+            </template>
+            <template x-if="delPanel.flow">
+              <span class="flex items-center gap-2">
+                <button class="kl-btn" @click="flowBackToExclude()">Back</button>
+                <button class="kl-btn primary" @click="flowReview()" :disabled="!delReady()">Next: review</button>
+              </span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Exclude & delete review: both steps on one screen, one job. -->
+    <div x-show="showReview" @click.self="flowCancel()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="flow && flow.step === 3">
+        <div class="w-[54rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium">Exclude and delete</div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files', 'exclude-and-delete')" @keydown.enter.prevent="openDocs('delete-files', 'exclude-and-delete')" title="Exclude first, then remove from old snapshots">?</span>
+              <button @click="flowCancel()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+            </div>
+            {{ flowsteps(3) }}
+          </div>
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div class="kl-callout" x-show="flowStillBackedUp().length"
+                 x-text="'Still backed up by ' + flowStillBackedUp().map(shortSource).join(', ') + '. Its next snapshot backs this up again.'"></div>
+            <div class="kl-note font-medium" style="color:var(--ok)" x-show="!flowStillBackedUp().length">Every source in the delete stops backing this up.</div>
+
+            <div class="kl-sec">
+              <div class="h">Rules <span class="count" x-text="countOf(flow.writes.length, 'policy', 'policies')"></span></div>
+              <div class="space-y-2">
+                <template x-for="(df, i) in flow.diffs" :key="df.target">
+                  <div>
+                    <div class="kl-note" x-show="df.before === null && !df.error">Reading the policy…</div>
+                    <div class="kl-callout" x-show="df.error" x-text="df.label + ': ' + df.error"></div>
+                    <template x-if="df.before !== null">{{ rulediff('df') }}</template>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="kl-sec">
+              <div class="h">Delete</div>
+              <div class="kl-facts">
+                <template x-for="row in flowDeleteFacts()" :key="row[0]">
+                  <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
+                </template>
+              </div>
+              <div class="kl-callout" x-show="flow.kind === 'files' && delCallout()" x-text="flow.kind === 'files' ? delCallout() : ''"></div>
+              <template x-if="flow.kind === 'files' && delPanel && delPanel.plan">
+                <div class="kl-list" style="max-height:160px">
+                  <template x-for="(m, i) in (delPanel.method === 'remove' ? delPanel.plan.matches : [])" :key="'m' + i">
+                    <div class="li">
+                      <span class="font-mono break-all grow" x-text="m.full_path"></span>
+                      <span class="pill warn shrink-0" x-show="delRowTag(m)" x-text="delRowTag(m)"></span>
+                      <span class="kl-note shrink-0" :title="fileSourcesTip(m)" x-text="fileSources(m)"></span>
+                    </div>
+                  </template>
+                  <template x-for="s in (delPanel.method === 'snapshots' ? delPanel.plan.snapshots : [])" :key="s.snapshot_id">
+                    <div class="li">
+                      <span class="num shrink-0" style="width:9.5rem" x-text="humanTime(s.start_time)"></span>
+                      <span class="font-mono break-all grow" x-text="shortSource(s.source)"></span>
+                      <span class="pill warn shrink-0" x-show="s.pinned">pinned</span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="flow.kind === 'folder' && removePlan && (removePlan.preview || []).length">
+                <div class="kl-list" style="max-height:160px">
+                  <template x-for="(f, i) in removePlan.preview.slice(0, 40)" :key="i">
+                    <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="num shrink-0" style="color:var(--muted)" x-text="fmtPhys(f.physical)"></span></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <div class="kl-runbar">
+              <button class="kl-btn" @click="flowDry()" :disabled="flowDryState() && flowDryState().running">
+                <span x-text="flowDryState() && flowDryState().done ? 'Dry run again' : 'Dry run the delete'"></span>
+              </button>
+              <span class="pill ok" x-show="flowDryState() && flowDryState().done && flowDryState().ok">dry run checked</span>
+            </div>
+            <template x-if="flow.kind === 'files' && delPanel">{{ dryresult('delPanel.dry') }}</template>
+            <template x-if="flow.kind === 'folder' && removePlan">{{ dryresult('removePlan.dry') }}</template>
+          </div>
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Rules are added first. A policy backup is taken before each.</span>
+            <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
+            <button class="kl-btn" @click="flowBackToDelete()">Back</button>
+            <button class="kl-btn danger" @click="flowExecute()" :disabled="!!wmOff('full')">Exclude and delete…</button>
+          </div>
+        </div>
+      </template>
+    </div>

@@ -1,0 +1,106 @@
+{% from "partials/_macros.html" import rulediff, task_counters %}
+
+    <div x-show="showJob" @click.self="closeJob()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="jobPanel">
+        <div class="bg-surface rounded-lg border border-bd w-full max-w-3xl max-h-[85vh] flex flex-col">
+          <div class="flex items-center gap-3 px-4 py-3 border-b border-bd">
+            <div class="min-w-0 grow">
+              <div class="font-semibold flex items-center gap-2">
+                <span x-text="jobPanel.kind_label"></span>
+                <span x-show="jobPanel.dry" class="pill">dry run</span>
+                <span x-show="jobPanel.state === 'running'" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+                <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('job-panel')" @keydown.enter.prevent="openDocs('job-panel')" title="Progress, output and result">?</span>
+              </div>
+              <div class="text-xs text-muted truncate font-mono" x-text="repoLabel(jobPanel.repo) + ' · ' + jobPanel.label + ' · job ' + jobPanel.job_id.slice(0, 6)"></div>
+            </div>
+            <button class="kl-btn danger" x-show="jobPanel.state === 'running'" @click="jobStop()">Stop</button>
+            <button class="kl-btn quiet" x-show="jobPanel.state === 'running'" @click="closeJob()">Run in background</button>
+            <button class="kl-btn quiet" x-show="!jobPanel.dry" @click="const id = 'job:' + jobPanel.job_id; closeJob(); openTaskById(id)" title="This job in Tasks, with kopia's full log" data-testid="job-open-task">Details</button>
+            <button class="kl-btn quiet" x-show="jobPanel.state !== 'running'" @click="closeJob()" title="Close" aria-label="Close">&times;</button>
+          </div>
+          <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">
+            <div class="kl-bar" :class="jobIndeterminate() ? 'busy' : ''"><i :style="'width:' + (jobIndeterminate() ? 30 : (jobProgress() || 0)) + '%'"></i></div>
+            <div class="flex items-center gap-2 text-xs text-muted">
+              <span x-text="jobProgressLabel()"></span>
+              <span class="grow"></span>
+              <span x-show="jobStateLine()" :class="jobPanelStateClass()" x-text="jobStateLine()"></span>
+              <span x-text="'elapsed ' + jobElapsed()"></span>
+            </div>
+            <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>
+            <div x-show="jobPanel.freed" class="text-xs font-medium" style="color:var(--ok)"
+                 x-text="jobPanel.freed ? 'Freed ' + fmtB(jobPanel.freed.freed) + ' · repository now ' + fmtB(jobPanel.freed.after) : ''"></div>
+            <div x-show="jobVerifySummary()" class="text-xs font-medium" style="color:var(--ok)" x-text="jobVerifySummary()" data-testid="verify-summary"></div>
+            <div x-show="jobFreesLater()" class="flex items-center gap-2 text-xs">
+              <span class="text-muted">Space comes back after maintenance.</span>
+              <button class="kl-btn quiet" style="height:22px" @click="openMaint(jobPanel.repo)">Run maintenance…</button>
+            </div>
+          </div>
+          <template x-if="taskCounters(jobPanel).length">
+            <div class="px-4 py-2 border-b border-bd overflow-auto" style="max-height:30vh" data-testid="job-counters">
+              {{ task_counters('jobPanel') }}
+            </div>
+          </template>
+          <template x-if="(jobPanel.results || []).length || jobPanel.held">
+            <div class="px-4 py-3 border-b border-bd space-y-2 overflow-auto" style="max-height:40vh">
+              <div class="kl-callout flex items-center gap-2" x-show="jobPanel.held">
+                <span class="grow">A rule was not added. The delete did not run.</span>
+                <button class="kl-btn danger" style="height:24px" x-show="_jobThen[jobPanel.job_id]" @click="jobRunHeldDelete()">Run the delete…</button>
+              </div>
+              <template x-for="(r, i) in (jobPanel.results || [])" :key="i">
+                <div>
+                  <div class="kl-callout" x-show="!r.ok" x-text="(r.target === 'global' ? 'Global' : shortSource(r.target)) + ': ' + (r.error || 'not added')"></div>
+                  <template x-if="r.ok">
+                    <div class="space-y-1">
+                      <div class="text-xs font-medium" :style="r.matches ? 'color:var(--ok)' : 'color:var(--warn)'"
+                           x-text="r.matches ? 'Saved to ' + (r.target === 'global' ? 'Global' : shortSource(r.target)) : 'Kopia stored something different than expected. Check the Policies tab.'"></div>
+                      <template x-for="fc in (r.fields || [])" :key="fc.field">
+                        <div class="flex items-baseline gap-2 text-[0.75rem] flex-wrap">
+                          <span class="w-44 shrink-0" x-text="polFieldLine(fc).label"></span>
+                          <span style="color:var(--danger)" class="line-through" x-text="polFieldLine(fc).before"></span>
+                          <span class="text-faint">→</span>
+                          <span style="color:var(--ok)" x-text="polFieldLine(fc).after"></span>
+                        </div>
+                      </template>
+                      <template x-if="JSON.stringify(r.before || []) !== JSON.stringify(r.stored || r.after || [])">
+                        <div>{{ rulediff('jobResultDiff(r)') }}</div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="kl-sec px-4 py-3 min-h-0 grow">
+            <div class="h">
+              <span>Output</span>
+              <span class="count" x-text="jobLineLabel()"></span>
+              <span class="acts">
+                <span class="kl-seg">
+                  <span :class="jobMode === 'clean' ? 'on' : ''" @click="jobSetMode('clean')">Clean</span>
+                  <span :class="jobMode === 'raw' ? 'on' : ''" @click="jobSetMode('raw')">Raw</span>
+                </span>
+              </span>
+            </div>
+            <div class="relative min-h-0">
+              <button class="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded border border-bd bg-surface text-muted hover:text-fg flex items-center justify-center"
+                @click="jobExpanded = !jobExpanded" :title="jobExpanded ? 'Collapse output' : 'Expand output'" :aria-label="jobExpanded ? 'Collapse output' : 'Expand output'">
+                <i x-show="!jobExpanded" class="ic ic-expand"></i>
+                <i x-show="jobExpanded" class="ic ic-collapse"></i>
+              </button>
+              <div class="kl-term whitespace-pre-wrap break-all" :class="jobExpanded ? 'h-[55vh]' : 'h-44'" x-ref="jobTerm" @scroll="jobOnScroll()">
+                <template x-for="(ln, i) in jobView().lines" :key="i">
+                  <div><span class="t" x-text="ln.slice(0, 8)"></span><span :class="jobLineClass(ln)" x-text="' ' + ln.slice(9)"></span></div>
+                </template>
+                <div x-show="!jobView().lines.length" class="text-muted">waiting for output...</div>
+              </div>
+            </div>
+          </div>
+          <div class="kl-footer">
+            <span class="kl-note" x-text="jobFooterNote()"></span>
+            <span class="spacer"></span>
+            <button class="kl-btn quiet" x-show="host.can_open && jobPanel.kind === 'restore' && jobPanel.state === 'done' && jobPanel.target" @click="openRestoredPath(jobPanel.target)">Open folder</button>
+            <button class="kl-btn quiet" x-show="jobPanel.commands_text" @click="jobCopyCommand()">Copy command</button>
+          </div>
+        </div>
+      </template>
+    </div>

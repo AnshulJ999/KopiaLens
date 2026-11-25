@@ -1,0 +1,34 @@
+      <section x-show="active==='excluded'" class="h-full flex flex-col gap-2">
+        <div class="kl-toolbar">
+          <span class="inline-flex items-center gap-1 text-sm min-w-0">
+            <button @click="excludedUp()" class="kl-btn icon" title="Up one level" aria-label="Up one level"><i class="ic ic-arrow-up"></i></button>
+            <template x-for="(c, i) in excludedCrumbs()" :key="i">
+              <span class="whitespace-nowrap"><span class="crumb" :class="i === excludedCrumbs().length - 1 ? 'font-medium' : 'text-muted'" @click="excludedNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < excludedCrumbs().length - 1"> › </span></span>
+            </template>
+          </span>
+          <div class="inline-flex rounded border border-bd overflow-hidden text-xs">
+            <button @click="setExcludedFilter('excluded')" :class="excludedFilter==='excluded' ? 'bg-sel font-medium' : ''" class="px-2 h-7">Not backed up</button>
+            <button @click="setExcludedFilter('backed')" :class="excludedFilter==='backed' ? 'bg-sel font-medium' : ''" class="px-2 h-7 border-l border-bd">Backed up</button>
+            <button @click="setExcludedFilter('all')" :class="excludedFilter==='all' ? 'bg-sel font-medium' : ''" class="px-2 h-7 border-l border-bd">All</button>
+          </div>
+          <span class="grow"></span>
+          <span class="text-xs text-muted" :title="_excludedNotes && _excludedNotes.unreadable.length ? 'Couldn\'t read:\n' + _excludedNotes.unreadable.join('\n') : ''" x-text="excludedMeta"></span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('excluded')" @keydown.enter.prevent="openDocs('excluded')" title="Not backed up means on disk but in no latest snapshot of any repository. Shows this computer's drives and the places added in Settings > Disk scanning.">?</span>
+        </div>
+        <div x-show="!excludedOk && diskLookup" class="rounded border border-bd p-3 text-sm flex flex-wrap items-center gap-3" data-testid="disk-help">
+          <span x-text="excludedHelpText()"></span>
+          <a x-show="excludedNeedsEverything()" class="kl-btn" href="https://www.voidtools.com/downloads/" target="_blank" rel="noopener">Get Everything</a>
+          <button class="kl-btn" @click="openDiskSettings()">Disk scanning settings</button>
+        </div>
+        <div x-show="_excludedNotIndexed" class="rounded border border-bd p-3 text-sm flex flex-wrap items-center gap-3" data-testid="not-indexed">
+          <span>Everything doesn't index this location.</span>
+          <button class="kl-btn" @click="openDiskSettings()">Disk scanning settings</button>
+        </div>
+        <template x-for="s in excludedScans" :key="s.id">
+          <div class="flex items-center gap-2 text-xs text-muted px-1" data-testid="disk-scan">
+            <span class="truncate" :title="s.path" x-text="excludedScanText(s)"></span>
+            <button class="kl-btn quiet" @click="excludedStop(s.id)" :aria-label="'Stop counting ' + s.path">Stop</button>
+          </div>
+        </template>
+        <div id="excludedTable" class="flex-1 min-h-0" x-show="excludedOk || !diskLookup"></div>
+      </section>

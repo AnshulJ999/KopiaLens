@@ -1,0 +1,35 @@
+      <section x-show="active==='churn'" class="h-full flex flex-col gap-2">
+        <div class="kl-toolbar">
+          <span class="font-medium">Churn</span>
+          <div class="inline-flex rounded border border-bd overflow-hidden">
+            <button @click="setChurnView('folder')" class="px-3 h-7 text-xs" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
+            <button @click="setChurnView('source')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
+            <button @click="setChurnView('ext')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='ext' ? 'bg-sel font-medium' : ''">By file type</button>
+          </div>
+          <select autocomplete="off" x-model="churnDays" @change="changeChurn()" class="fld border border-bd bg-surface" title="Time window">
+            <option value="1">Last 24 hours</option>
+            <option value="3">Last 3 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="180">Last 6 months</option>
+            <option value="365">Last year</option>
+          </select>
+          <label x-show="churnView==='folder'" title="How many folder levels deep to group by">Depth
+            <select autocomplete="off" x-model.number="churnDepth" @change="changeChurn()" class="fld border border-bd bg-surface">
+              <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" :selected="d == churnDepth" x-text="d"></option></template>
+            </select></label>
+          <span class="grow"></span>
+          <span class="text-xs text-muted" x-text="churnMeta"></span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('churn')" @keydown.enter.prevent="openDocs('churn')" title="Churn shows what keeps adding new data to your backups in the chosen window. Files rewritten again and again are often worth excluding.">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; loadChurn(true)">Recompute now</button>
+              <button @click="open = false; csv('#churnTable', fileName('churn', churnView + '-' + churnDays + 'd'))">Export CSV</button>
+              <button @click="open = false; openTableLayout('#churnTable')">Table layout…</button>
+            </div>
+          </span>
+        </div>
+        <div id="churnTable" class="flex-1 min-h-0"></div>
+      </section>

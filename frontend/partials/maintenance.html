@@ -1,0 +1,58 @@
+    <!-- Maintenance panel: kopia maintenance run as a job. -->
+    <div x-show="showMaint" @click.self="closeMaint()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="maint">
+        <div class="w-[34rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium">Run maintenance</div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('maintenance')" @keydown.enter.prevent="openDocs('maintenance')" title="Quick and full maintenance, and when space comes back">?</span>
+              <button @click="closeMaint()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <div class="kl-note mt-0.5" x-text="maintRepoName()"></div>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div class="flex flex-wrap items-center gap-4">
+              <div>
+                <div class="text-xs font-medium mb-1">Type</div>
+                <span class="kl-seg">
+                  <span :class="!maint.full ? 'on' : ''" @click="maint.full = false" title="Index and cache housekeeping. Frees little space.">Quick</span>
+                  <span :class="maint.full ? 'on' : ''" @click="maint.full = true" title="Deletes data no snapshot uses any more">Full</span>
+                </span>
+              </div>
+              <div>
+                <div class="text-xs font-medium mb-1">Safety</div>
+                <span class="kl-seg">
+                  <span :class="maint.safety === 'full' ? 'on' : ''" @click="maint.safety = 'full'" title="Kopia waits before deleting unused data. Space returns over later runs.">Normal</span>
+                  <span :class="maint.safety === 'none' ? 'on' : ''" @click="maint.safety = 'none'" title="Deletes unused data now. For single-user repositories.">None</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="kl-note" x-show="maint.loading">Reading maintenance info…</div>
+            <div class="kl-callout" x-show="maint.error" x-text="maint.error"></div>
+            <div class="kl-callout" x-show="maintNotOwner()"
+                 x-text="'This computer is not the maintenance owner (' + ((maint.info || {}).owner || '?') + '). Kopia refuses to run maintenance from here.'"></div>
+            <div class="kl-callout" x-show="maint.safety === 'none'">Safety none deletes unused data immediately. Run it only when no snapshot is in progress on this repository.</div>
+
+            <template x-if="!maint.loading && maint.info">
+              <div class="kl-facts">
+                <template x-for="row in maintFacts()" :key="row[0]">
+                  <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
+                </template>
+                <div class="r" x-show="maint.info.next_full"><span class="k">Next scheduled full</span><span x-text="freshTime(maint.info.next_full)"></span></div>
+              </div>
+            </template>
+          </div>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Runs as a job. Kopia usually needs a few runs to return all space.</span>
+            <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('non_destructive', maint.repo)" x-text="wmWhy('non_destructive', maint.repo)"></span>
+            <button class="kl-btn" @click="closeMaint()">Cancel</button>
+            <button class="kl-btn" :class="maint.safety === 'none' ? 'danger' : 'primary'" @click="maintStart()"
+                    :disabled="maint.loading || maintNotOwner() || !!wmOff('non_destructive', maint.repo)" x-text="'Run ' + (maint.full ? 'full' : 'quick') + ' maintenance…'"></button>
+          </div>
+        </div>
+      </template>
+    </div>

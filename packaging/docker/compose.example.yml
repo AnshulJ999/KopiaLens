@@ -1,0 +1,34 @@
+# KopiaLens with Docker Compose. Save as compose.yml, change the time zone and paths, then: docker compose up -d
+# Guide: https://kopialens.com/docs/docker
+services:
+  kopialens:
+    image: anshulj99/kopialens:latest
+    container_name: kopialens
+    hostname: kopialens
+    restart: unless-stopped         # also how the Restart button in Settings works
+    stop_grace_period: 30s
+    ports:
+      - "7123:7123"
+    environment:
+      TZ: "Europe/London"           # your time zone, for the nightly index time
+      # PUID: "1000"                # run as this user and group (files in /config belong to them)
+      # PGID: "1000"
+    volumes:
+      # Required: settings, the index and kopia's cache. Without it everything is lost on recreate.
+      # Use a full path and create the folder first (Synology: /volume1/docker/kopialens, Unraid: /mnt/user/appdata/kopialens).
+      - /opt/kopialens:/config
+      # Mount your Kopia repository (if it's a local folder or network share) here so KopiaLens can see it.
+      - /mnt/backups/kopia:/mnt/backups/kopia
+      # Optional: backed-up folders, at the same paths as in your snapshots, so the Excluded
+      # browser can compare the disk with your backups. Read-only is enough.
+      - /home:/home:ro
+      # Optional: snapshot mounts, visible on the host in this folder (see below).
+      # - /mnt/kopialens-mounts:/mounts:shared
+    # Optional: mounting snapshots. Remove the # from these lines and the /mounts line above.
+    # The host needs /dev/fuse, or the container won't start.
+    # devices:
+    #   - /dev/fuse:/dev/fuse
+    # cap_add:
+    #   - SYS_ADMIN
+    # security_opt:
+    #   - apparmor:unconfined

@@ -1,0 +1,66 @@
+
+    <!-- Indexing panel. Built like the job runner: progress bar, stages, current source,
+         the worker's live log in Clean/Raw, and a Stop that means stop. -->
+    <div x-show="showIndex" @click.self="closeIndexPanel()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <div class="bg-surface rounded-lg border border-bd w-full max-w-3xl max-h-[85vh] flex flex-col">
+        <div class="flex items-center gap-3 px-4 py-3 border-b border-bd">
+          <div class="min-w-0 grow">
+            <div class="font-semibold flex items-center gap-2">
+              <span x-text="(ixs().building ? 'Indexing ' : 'Index · ') + repoLabel(indexLogRepo || repo)"></span>
+              <span x-show="ixs().building" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('indexing')" @keydown.enter.prevent="openDocs('indexing')" title="How indexing works">?</span>
+            </div>
+            <div class="text-xs text-muted break-words" x-text="indexDetailText() || ixs().stage || ''"></div>
+          </div>
+          <button class="kl-btn danger" x-show="ixs().building" @click="indexStop()">Stop</button>
+          <button class="kl-btn quiet" x-show="ixs().building" @click="closeIndexPanel()">Run in background</button>
+          <button class="kl-btn quiet" x-show="!ixs().building" @click="closeIndexPanel()" title="Close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">
+          <div class="kl-bar" :class="indexPct() == null && ixs().building ? 'busy' : ''">
+            <i :style="'width:' + (indexPct() == null && ixs().building ? 30 : (indexPct() || 0)) + '%'"></i>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-muted">
+            <span x-text="indexPanelCounts()"></span>
+            <span class="grow"></span>
+            <template x-if="ixs().building && indexActivity()">
+              <span :style="indexActivity().slow ? 'color:var(--warn)' : ''" x-text="indexActivity().text" data-testid="index-activity"></span>
+            </template>
+            <span x-show="indexEtaText()" x-text="indexEtaText()"></span>
+          </div>
+          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note">A first index can take hours. Closing this panel doesn't stop it. <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('indexing', 'first-index')" @keydown.enter.prevent="openDocs('indexing', 'first-index')" title="If it stops, the next run continues from where it was.">?</span></div>
+          <div x-show="ixs().building && !ixs().never_indexed" class="text-xs text-muted" data-testid="index-note">Closing this panel doesn't stop indexing.</div>
+          <div x-show="indexQueuedText()" class="text-xs text-muted" x-text="'Next in the queue: ' + indexQueuedText()"></div>
+          <div x-show="ixs().error" class="text-xs text-danger break-all" x-text="ixs().error"></div>
+        </div>
+
+        <div class="px-4 py-3 border-b border-bd">
+          <div class="text-xs font-medium mb-1">Stages</div>
+          <div class="flex flex-wrap gap-1.5">
+            <template x-for="s in indexStageRows()" :key="s.key">
+              <span class="pill" :class="s.state === 'now' ? 'warn' : (s.state === 'done' ? 'ok' : '')" x-text="s.label"></span>
+            </template>
+          </div>
+        </div>
+
+        <div class="kl-sec px-4 py-3 min-h-0 grow">
+          <div class="h">
+            <span>Worker log</span>
+            <span class="acts">
+              <span class="kl-seg">
+                <span :class="indexLogMode === 'clean' ? 'on' : ''" @click="indexLogSetMode('clean')">Clean</span>
+                <span :class="indexLogMode === 'raw' ? 'on' : ''" @click="indexLogSetMode('raw')">Raw</span>
+              </span>
+            </span>
+          </div>
+          <div class="kl-term h-64" x-ref="indexTerm">
+            <template x-for="(ln, i) in indexLogView()" :key="i">
+              <div><span class="t" x-text="ln.slice(0, 8)"></span><span :class="indexLogClass(ln)" x-text="' ' + ln.slice(9)"></span></div>
+            </template>
+            <div x-show="!indexLogView().length" class="text-muted" x-text="indexLogNote || 'Waiting for the worker to say something…'"></div>
+          </div>
+          <div class="kl-note" x-show="indexLogNote && indexLogView().length" x-text="indexLogNote"></div>
+        </div>
+      </div>
+    </div>

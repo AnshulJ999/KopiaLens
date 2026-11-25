@@ -1,0 +1,364 @@
+{#- Policy editor pieces. The Tabs and Scroll layouts in tabs/policies.html are both built from
+    pol_section(); a change to a section shows in both. Every x-if template has one root. -#}
+
+{%- macro pol_editor() -%}
+<div class="pe-ed">
+  <template x-if="f.type === 'int' || f.type === 'loglevel'">
+    <input autocomplete="off" type="number" min="0" :max="f.type === 'loglevel' ? 10 : null" class="fld border border-bd bg-surface2 w-28 text-right"
+           :value="edGet(f.path) ?? ''" placeholder="inherit" :disabled="polGlobalOnly(f)"
+           @change="edNum(f.path, $event.target.value)">
+  </template>
+  <template x-if="f.type === 'bool'">
+    <span class="kl-seg">
+      <span :class="edGet(f.path) === undefined || edGet(f.path) === null ? 'on' : ''" @click="edSet(f.path, null)">Inherit</span>
+      <span :class="edGet(f.path) === true ? 'on' : ''" @click="edSet(f.path, true)">Yes</span>
+      <span :class="edGet(f.path) === false ? 'on' : ''" @click="edSet(f.path, false)">No</span>
+    </span>
+  </template>
+  <template x-if="f.type === 'flag'">
+    <span class="kl-seg">
+      <span :class="!edGet(f.path) ? 'on' : ''" @click="edSet(f.path, null)">Off</span>
+      <span :class="edGet(f.path) ? 'on' : ''" @click="edSet(f.path, true)">On</span>
+    </span>
+  </template>
+  <template x-if="f.type === 'vss'">
+    <span class="kl-seg">
+      <span :class="edGet(f.path) === undefined || edGet(f.path) === null ? 'on' : ''" @click="edSet(f.path, null)">Inherit</span>
+      <span :class="edGet(f.path) === 0 ? 'on' : ''" @click="edSet(f.path, 0)">Never</span>
+      <span :class="edGet(f.path) === 2 ? 'on' : ''" @click="edSet(f.path, 2)">When available</span>
+      <span :class="edGet(f.path) === 1 ? 'on' : ''" @click="edSet(f.path, 1)">Always</span>
+    </span>
+  </template>
+  <template x-if="f.type === 'bytes'">
+    <span class="flex items-center gap-1">
+      <input autocomplete="off" type="number" min="0" step="any" class="fld border border-bd bg-surface2 w-24 text-right" placeholder="inherit"
+             :value="edBytesParts(f.path).num" @change="edBytes(f.path, $event.target.value, $event.target.nextElementSibling.value)">
+      <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edBytes(f.path, $event.target.previousElementSibling.value, $event.target.value)">
+        <template x-for="u in polUnits()" :key="u[0]"><option :value="u[0]" :selected="edBytesParts(f.path).unit === u[0]" x-text="u[0]"></option></template>
+      </select>
+    </span>
+  </template>
+  <template x-if="f.type === 'interval'">
+    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value ? Number($event.target.value) : null)">
+      <option value="" :selected="!edGet(f.path)">Not set</option>
+      <template x-for="iv in polIntervals()" :key="iv[0]"><option :value="iv[0]" :selected="edGet(f.path) === iv[0]" x-text="'Every ' + iv[1]"></option></template>
+      <template x-if="edGet(f.path) && !polIntervals().some((iv) => iv[0] === edGet(f.path))">
+        <option :value="edGet(f.path)" selected x-text="polIntervalText(edGet(f.path))"></option>
+      </template>
+    </select>
+  </template>
+  <template x-if="f.type === 'select'">
+    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value || null)">
+      <option value="" :selected="!edGet(f.path)">Inherit</option>
+      <template x-for="o in polOptions(f)" :key="o"><option :value="o" :selected="edGet(f.path) === o" x-text="o"></option></template>
+    </select>
+  </template>
+  <template x-if="f.type === 'strlist'">
+    <input autocomplete="off" class="fld border border-bd bg-surface2 w-full font-mono text-xs" placeholder="inherit · comma-separated"
+           :value="(edGet(f.path) || []).join(', ')" @change="edList(f.path, $event.target.value)">
+  </template>
+  <template x-if="f.type === 'tod'">
+    <div class="flex flex-wrap items-center gap-1">
+      <template x-for="(t, i) in (edGet(f.path) || [])" :key="i">
+        <span class="pill font-mono"><span x-text="String(t.hour).padStart(2, '0') + ':' + String(t.min).padStart(2, '0')"></span>
+          <button class="ml-1" title="Remove" @click="edTodDel(f.path, i)">&times;</button></span>
+      </template>
+      <input autocomplete="off" class="fld border border-bd bg-surface2 w-20 font-mono text-xs" placeholder="HH:MM"
+             @keydown.enter="edTodAdd(f.path, $event.target.value) && ($event.target.value = '')">
+      <button class="kl-btn quiet" @click="edTodAdd(f.path, $event.target.previousElementSibling.value) && ($event.target.previousElementSibling.value = '')">Add</button>
+    </div>
+  </template>
+  <template x-if="f.type === 'cron'">
+    <div class="w-full space-y-1">
+      <textarea autocomplete="off" rows="2" class="fld border border-bd bg-surface2 w-full font-mono text-xs py-1" style="height:auto" placeholder="inherit · one line per schedule"
+                :value="(edGet(f.path) || []).join('\n')" @change="edCron(f.path, $event.target.value)"></textarea>
+      <template x-if="!polMulti.on">
+        <div class="space-y-0.5">
+          <template x-for="c in ((polRes() || {}).cron || [])" :key="c.line">
+            <div class="kl-note" :style="c.error ? 'color:var(--danger)' : ''" x-text="c.error ? c.line + ': ' + c.error : (polCronMeaning(c) || 'Custom schedule')"></div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </template>
+  <template x-if="f.type === 'action'">
+    <div class="w-full grid grid-cols-2 gap-1">
+      <input autocomplete="off" class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Program or script path" :value="(edGet(f.path) || {}).path || ''" @change="edAction(f.path, 'path', $event.target.value)">
+      <input autocomplete="off" class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Arguments" :value="((edGet(f.path) || {}).args || []).join(' ')" @change="edAction(f.path, 'args', $event.target.value)">
+      <input autocomplete="off" type="number" min="0" class="fld border border-bd bg-surface2 text-xs" placeholder="Timeout (seconds)" :value="(edGet(f.path) || {}).timeout ?? ''" @change="edAction(f.path, 'timeout', $event.target.value)">
+      <select autocomplete="off" class="fld border border-bd bg-surface2 text-xs" @change="edAction(f.path, 'mode', $event.target.value)">
+        <option value="" :selected="!(edGet(f.path) || {}).mode">Must succeed</option>
+        <option value="optional" :selected="(edGet(f.path) || {}).mode === 'optional'">Optional</option>
+        <option value="async" :selected="(edGet(f.path) || {}).mode === 'async'">Run in background</option>
+      </select>
+    </div>
+  </template>
+</div>
+{%- endmacro -%}
+
+{%- macro pol_row() -%}
+<div class="pe-row" :class="edStaged(f.path) ? 'pe-staged' : ''">
+  <div class="pe-l"><div class="font-medium" x-text="f.label"></div><div class="kl-note" x-show="f.help" x-text="f.help"></div></div>
+  <div>{{ pol_editor() }}</div>
+  <div class="pe-e">
+    <template x-if="polMulti.on">
+      <div><div x-text="polMultiSummary(f.path) || 'Pick policies'"></div><div class="kl-note">across the picked policies</div></div>
+    </template>
+    <template x-if="!polMulti.on">
+      <div>
+        <div class="num" x-text="polRes() ? polShow(f, polEff(f.path)) : (polResolveError ? '' : 'Loading…')"></div>
+        <div class="kl-note" x-show="!edStaged(f.path)">
+          <template x-if="polFromTarget(f.path)">
+            <button class="underline" style="color:var(--link)" @click="polTryLeave(polFromTarget(f.path))" x-text="polFromText(f.path)"></button>
+          </template>
+          <template x-if="!polFromTarget(f.path)"><span x-text="polFromText(f.path)"></span></template>
+        </div>
+        <div class="kl-note" style="color:var(--warn)" x-show="edStaged(f.path)">
+          <span x-text="'was ' + polShow(f, polEffBefore(f.path))"></span>
+          <button class="kl-btn quiet" style="height:20px" @click="edUndo(f.path)">Undo</button>
+        </div>
+      </div>
+    </template>
+  </div>
+  <div class="pe-lock" x-show="polCantClear(f) || polGlobalOnly(f)"
+       x-text="polGlobalOnly(f) ? 'Only Global, a user or a computer policy can set this.' : polCantClear(f)"></div>
+</div>
+{%- endmacro -%}
+
+{%- macro pol_rows(section) -%}
+<div class="pe-rows">
+  <div class="pe-head"><span>Setting</span>
+    <span class="flex items-center gap-1"><span x-text="polMulti.on ? 'New value' : 'This policy'"></span>
+      <span class="kl-help" tabindex="0" :title="polMulti.on ? 'Leave blank to keep each policy\'s own value.' : 'Leave blank to use the parent\'s value.'">?</span></span>
+    <span>In effect</span></div>
+  <template x-for="f in polFields('{{ section }}')" :key="f.path">{{ pol_row() }}</template>
+</div>
+{%- endmacro -%}
+
+{%- macro pol_section(id) -%}
+<div>
+{%- if id == 'exclusions' %}
+  {{ caller() }}
+{%- elif id == 'retention' %}
+  {{ pol_rows('retention') }}
+  <template x-if="!polMulti.on && ((polRes() || {}).retention_impact || []).length">
+    <div class="kl-sec mt-3">
+      <div class="h">What the new retention keeps</div>
+      <template x-for="ri in polRes().retention_impact.slice(0, 8)" :key="ri.source">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="truncate grow" x-text="shortSource(ri.source)"></span>
+          <span class="num" x-text="ri.kept_before + ' → ' + ri.kept_after + ' of ' + countOf(ri.total, 'snapshot')"></span>
+        </div>
+      </template>
+      <div class="kl-note">Counted with KopiaLens' copy of kopia's retention rules. Snapshots above the new counts are deleted at the next cleanup.</div>
+    </div>
+  </template>
+{%- elif id == 'schedule' %}
+  {{ pol_rows('schedule') }}
+  <template x-if="!polMulti.on">
+    <div class="kl-sec mt-3">
+      <div class="h">Next snapshots</div>
+      <template x-if="polNextRuns().length">
+        <div class="text-xs space-y-0.5">
+          <template x-for="(n, i) in polNextRuns()" :key="i">
+            <div><span class="num" x-text="n.when"></span> <span class="text-muted" x-text="'(' + n.rel + ')'"></span></div>
+          </template>
+        </div>
+      </template>
+      <div class="text-xs" x-show="!polNextRuns().length" x-text="polNextEmpty()"></div>
+      <div class="kl-note"><span x-text="schedulesNote()"></span> <button type="button" class="underline" @click="openEngineDlg()" x-show="engineFor()">Who runs backups…</button></div>
+    </div>
+  </template>
+{%- elif id == 'files' %}
+  {{ pol_rows('files') }}
+{%- elif id == 'compression' %}
+  <div class="kl-note mb-2">Applies to data uploaded from now on. Stored data is not recompressed.</div>
+  {{ pol_rows('compression') }}
+{%- elif id == 'advanced' %}
+  <div class="space-y-2">
+    <template x-for="g in polAdvGroups()" :key="g">
+      <details class="pe-adv" :open="g === 'Error handling'">
+        <summary class="cursor-pointer select-none text-sm font-medium py-1.5" x-text="g"></summary>
+        <div class="kl-callout mb-2 flex items-center gap-2" x-show="g === 'Snapshot scripts' && polActionsOff()">
+          <span class="grow">Scripts are off on this computer, so they won't run.</span>
+          <button type="button" class="kl-btn quiet" x-show="isDesktopWindow()" @click="polSetScripts(true)" data-testid="scripts-on">Turn on scripts</button></div>
+        <div class="kl-note mb-2 flex items-center gap-2" x-show="g === 'Snapshot scripts' && polActionsOn() && isDesktopWindow()">
+          <span class="grow">Scripts are on for this computer.</span>
+          <button type="button" class="kl-btn quiet" @click="polSetScripts(false)">Turn off scripts</button></div>
+        <div class="kl-callout mb-2" x-show="g === 'Splitter'">Changing the splitter makes new data dedupe badly against what is already stored. The repository's own splitter was chosen when it was created.</div>
+        <div class="kl-note mb-2" x-show="g === 'Logging'">Each is a detail level from 0 to 10.</div>
+        <div class="kl-callout mb-2" x-show="g === 'Inheritance'">Turning this on stops every policy above this one, and kopia's defaults, from applying here.</div>
+        <div class="pe-rows">
+          <template x-for="f in polFields('advanced', g)" :key="f.path">{{ pol_row() }}</template>
+        </div>
+      </details>
+    </template>
+    <template x-if="!polMulti.on && polRes()">
+      <details class="pe-adv">
+        <summary class="cursor-pointer select-none text-sm font-medium py-1.5">Raw policy</summary>
+        <pre class="text-[0.6875rem] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="JSON.stringify(polRes().draft, null, 2)"></pre>
+      </details>
+    </template>
+  </div>
+{%- endif %}
+</div>
+{%- endmacro -%}
+
+{#- Modals -#}
+{%- macro pol_modals() -%}
+<!-- Leaving a policy with unsaved changes -->
+<template x-if="polLeaveBox">
+  <div class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6" @click.self="polLeaveChoice('stay')">
+    <div class="w-[34rem] max-w-full rounded-lg border border-bd bg-surface text-sm flex flex-col">
+      <div class="px-4 pt-3 pb-2 border-b border-bd font-medium" x-text="'Unsaved changes on ' + polTargetLabel(polLeaveBox.from)"></div>
+      <div class="p-4 space-y-2">
+        <div class="kl-list" style="max-height:220px">
+          <template x-for="(ln, i) in polLeaveBox.lines" :key="i"><div class="li" x-text="ln"></div></template>
+        </div>
+      </div>
+      <div class="kl-footer">
+        <span class="spacer"></span>
+        <button class="kl-btn" @click="polLeaveChoice('stay')">Stay</button>
+        <button class="kl-btn danger" @click="polLeaveChoice('discard')" x-text="'Discard ' + polLeaveBox.lines.length + ' change' + (polLeaveBox.lines.length === 1 ? '' : 's')"></button>
+        <button class="kl-btn primary" @click="polLeaveChoice('save')">Review and save…</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- New policy -->
+<template x-if="polNewBox">
+  <div class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6" @click.self="polNewBox = null">
+    <div class="w-[34rem] max-w-full rounded-lg border border-bd bg-surface text-sm flex flex-col">
+      <div class="px-4 pt-3 pb-2 border-b border-bd font-medium">New policy</div>
+      <div class="p-4 space-y-3">
+        <label class="block"><span class="text-xs text-muted">Folder</span>
+          <input autocomplete="off" class="fld border border-bd bg-surface2 w-full font-mono text-xs mt-1" placeholder="D:\Projects" x-model="polNewBox.path" @keydown.enter="polCreateNew()"></label>
+        <label class="block"><span class="text-xs text-muted">Computer and user</span>
+          <select autocomplete="off" class="fld border border-bd bg-surface2 w-full mt-1" @change="polNewBox.owner = $event.target.value">
+            <template x-for="o in polNewBox.owners" :key="o"><option :value="o" :selected="polNewBox.owner === o" x-text="o"></option></template>
+          </select></label>
+        <div class="kl-note">The policy applies to this folder and everything below it. Nothing is saved until you review and save.</div>
+        <div class="kl-callout" x-show="polNewBox.error" x-text="polNewBox.error"></div>
+      </div>
+      <div class="kl-footer"><span class="spacer"></span>
+        <button class="kl-btn" @click="polNewBox = null">Cancel</button>
+        <button class="kl-btn primary" @click="polCreateNew()">Open in editor</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- Rule Preview -->
+<template x-if="polPreview">
+  <div class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6" @click.self="polPreview = null">
+    <div class="w-[52rem] max-w-full max-h-[88vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+      <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd flex items-center gap-2">
+        <div class="font-medium">Preview</div>
+        <span class="font-mono text-xs break-all" x-text="polPreview.pattern"></span>
+        <button @click="polPreview = null" class="ml-auto kl-btn quiet">&times;</button>
+      </div>
+      <div class="shrink-0 px-4 py-2 border-b border-bd flex items-center gap-2 flex-wrap">
+        <span class="kl-seg">
+          <span :class="polPreview.mode === 'disk' ? 'on' : ''" @click="polPreview.mode = 'disk'; polRunPreview()">On disk now</span>
+          <span :class="polPreview.mode === 'index' ? 'on' : ''" @click="polPreview.mode = 'index'; polRunPreview()">In the backups</span>
+        </span>
+        <template x-if="polPreview.data && (polPreview.data.scope || []).length > 1">
+          <select autocomplete="off" class="fld border border-bd bg-surface2 text-xs" @change="polPreview.source = $event.target.value; polRunPreview()">
+            <template x-for="s in polPreview.data.scope" :key="s"><option :value="s" :selected="polPreview.source === s" x-text="shortSource(s)"></option></template>
+          </select>
+        </template>
+        <span class="kl-note grow" x-text="polPreview.mode === 'disk' ? 'What this rule keeps out of the backup today.' : 'Backed-up files this rule would drop from the next snapshot.'"></span>
+      </div>
+      <div class="flex-1 min-h-0 overflow-auto p-4 space-y-3">
+        <div class="text-xs text-muted" x-show="polPreview.busy">Looking…</div>
+        <template x-if="!polPreview.busy && polPreview.data">
+          <div class="space-y-3">
+            <div class="flex items-center gap-3 text-xs">
+              <span class="font-medium" x-text="Number(polPreview.data.total || 0).toLocaleString(NUM_LOCALE) + ' item' + (polPreview.data.total === 1 ? '' : 's') + ' · ' + fmtB(polPreview.data.bytes || 0)"></span>
+              <span class="text-muted" x-show="polPreview.data.capped" x-text="'showing the ' + (polPreview.data.items || []).length + ' biggest'"></span>
+              <span class="text-muted" x-show="polPreview.data.provider" x-text="'from ' + (polPreview.data.provider === 'everything' ? 'Everything' : 'a folder scan')"></span>
+            </div>
+            <div class="kl-callout" x-show="polPreview.data.note || polPreview.data.error" x-text="polPreview.data.error || polPreview.data.note"></div>
+            <template x-for="g in polPreviewGroups()" :key="g.folder">
+              <div>
+                <div class="text-xs font-medium flex gap-2"><span class="font-mono break-all grow" x-text="g.folder"></span><span class="num text-muted" x-text="fmtB(g.bytes)"></span></div>
+                <div class="kl-list mt-1" style="max-height:none">
+                  <template x-for="it in g.items" :key="it.path">
+                    <div class="li"><span class="font-mono break-all grow" x-text="polPreviewName(it)"></span><span class="num text-muted" x-text="it.size == null ? 'size not measured' : fmtB(it.size)"></span></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div class="kl-note" x-show="!(polPreview.data.items || []).length && !polPreview.data.note && !polPreview.data.error">Nothing matches.</div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+{%- endmacro -%}
+
+{%- macro pol_multi() -%}
+<div class="space-y-3">
+  <div class="rounded border border-bd bg-surface p-3">
+    <div class="flex items-center gap-2 flex-wrap">
+      <div class="font-medium" x-text="polMulti.picked.length < 2 ? 'Pick two or more policies on the left to edit them together.' : 'Editing ' + countOf(polMulti.picked.length, 'policy', 'policies') + ' together'"></div>
+      <span class="grow"></span>
+      <button class="kl-btn" @click="polMultiToggle()">Done</button>
+    </div>
+    <div class="kl-note mt-1">Only settings you change are written. Exclusion rules stay per policy.</div>
+  </div>
+  <template x-if="polMulti.picked.length >= 2">
+    <div class="space-y-3">
+      <template x-for="s in polSections().filter((x) => x.id !== 'exclusions')" :key="s.id">
+        <details class="rounded border border-bd bg-surface p-3" :open="s.id === 'retention'">
+          <summary class="cursor-pointer select-none font-medium text-sm flex items-center gap-2"><span x-text="s.label"></span>
+            <span class="pill warn" x-show="polSecCount(s.id)" x-text="polSecCount(s.id) + ' changed'"></span></summary>
+          <div class="pe-rows mt-2">
+            <template x-for="f in polFields(s.id).filter((x) => x.kind !== 'local')" :key="f.path">{{ pol_row() }}</template>
+          </div>
+        </details>
+      </template>
+      <template x-for="p in (polMulti.plan || [])" :key="p.field">
+        <div class="rounded border border-bd bg-surface p-3 space-y-2">
+          <div class="font-medium text-sm" x-text="'Where ' + (polFieldSpec(p.field) || {}).label + ': ' + (p.value === null ? 'inherit' : polShow(polFieldSpec(p.field) || {}, p.value)) + ' gets written'"></div>
+          <template x-if="p.common_parent">
+            <div class="kl-callout flex items-center gap-2 flex-wrap">
+              <span class="grow" x-text="'Every picked policy gets this from ' + polTargetLabel(p.common_parent) + '. Setting it there once also changes every other policy under it.'"></span>
+              <button class="kl-btn quiet" @click="polMultiUseParent(p.field, p.common_parent)" x-text="'Set it on ' + polTargetLabel(p.common_parent) + ' instead'"></button>
+            </div>
+          </template>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead class="text-left text-muted"><tr><th class="p-1.5"></th><th class="p-1.5">Policy</th><th class="p-1.5">Today</th><th class="p-1.5"></th></tr></thead>
+              <tbody>
+                <template x-if="p.common_parent && polMulti.ticks[p.field + '|parent:' + p.common_parent]">
+                  <tr class="border-t border-bd-soft"><td class="p-1.5"><input autocomplete="off" type="checkbox" checked @change="polMultiTick(p.field, 'parent:' + p.common_parent)"></td>
+                    <td class="p-1.5 font-mono break-all" x-text="polTargetLabel(p.common_parent)"></td><td class="p-1.5">parent</td><td></td></tr>
+                </template>
+                <template x-for="row in p.rows" :key="row.target">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5"><input autocomplete="off" type="checkbox" :checked="!!polMulti.ticks[p.field + '|' + row.target]" @change="polMultiTick(p.field, row.target)"></td>
+                    <td class="p-1.5 font-mono break-all" x-text="polTargetLabel(row.target)"></td>
+                    <td class="p-1.5" x-text="polShow(polFieldSpec(p.field) || {}, row.effective) + (row.inherits ? ' · from ' + polTargetLabel(row.from) : ' · set here')"></td>
+                    <td class="p-1.5">
+                      <span class="pill" x-show="row.creates_policy">creates a policy</span>
+                      <span class="pill warn" x-show="row.no_effect" title="An ancestor sets this; a blank value here changes nothing">no effect</span>
+                      <span class="pill" x-show="!row.inherits">has its own value</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+      <div class="flex items-center gap-2" x-show="(polMulti.plan || []).length">
+        <span class="kl-note grow">One backup, one job, one step per policy.</span>
+        <button class="kl-btn primary" @click="polMultiSave()" x-text="'Save to ' + polMultiWrites().length + ' polic' + (polMultiWrites().length === 1 ? 'y' : 'ies') + '…'"></button>
+      </div>
+    </div>
+  </template>
+</div>
+{%- endmacro -%}

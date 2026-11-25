@@ -1,0 +1,345 @@
+/* KopiaLens component styles. Colours come from tokens.css - never a literal here.
+
+   Everything above the "Primitives" divider moved out of index.html unchanged.
+   Everything below it is the shared vocabulary new UI is written in: one button set, one
+   card, one list, one section, one footer, one tab strip, one log view. */
+
+html, body { height: 100%; }
+/* Bundled fonts (OFL, files and licences in vendor/fonts). The Appearance setting picks one via data-font. */
+@font-face { font-family: "Inter"; src: url("../vendor/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../vendor/fonts/GeistVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../vendor/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../vendor/fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../vendor/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../vendor/fonts/IBMPlexSans-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+:root { --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+html[data-font="geist"] { --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+html[data-font="plex"] { --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+html[data-font="system"] { --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { font-family: var(--font-sans); }
+[x-cloak] { display: none !important; }
+
+.tabulator { border: 1px solid var(--bd); border-radius: var(--r-lg); font-size: 0.78125rem; background: var(--surface); }
+.tabulator .tabulator-header, .tabulator .tabulator-header .tabulator-col { background: var(--head); border-color: var(--bd); color: var(--fg); }
+.tabulator .tabulator-row { background: var(--surface); color: var(--fg); }
+.tabulator .tabulator-row.tabulator-row-even { background: var(--surface2); }
+.tabulator .tabulator-row:hover { background: var(--hover) !important; cursor: pointer; }
+/* Selected rows: a clear tint and a left bar, never the striped-row grey. */
+.tabulator .tabulator-row.tabulator-selected { background: color-mix(in srgb, var(--link) 16%, var(--surface)) !important; box-shadow: inset 3px 0 0 var(--link); }
+.tabulator .tabulator-row.tabulator-selected:hover { background: color-mix(in srgb, var(--link) 22%, var(--surface)) !important; }
+.tabulator .tabulator-row .tabulator-cell { border-right: 1px solid var(--bd); user-select: text; -webkit-user-select: text; padding: var(--cell-py) var(--cell-px); }
+.tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding: var(--cell-py) var(--cell-px); }
+/* Matches Tabulator's own sortable-header hover rule, which would paint it light grey in every theme. */
+.tabulator .tabulator-header .tabulator-col.tabulator-sortable.tabulator-col-sorter-element:hover { background: var(--hover); }
+.crumb { cursor: pointer; color: var(--fg); }
+.crumb:hover { text-decoration: underline; }
+.tabulator .tabulator-placeholder, .tabulator .tabulator-placeholder-contents { color: var(--muted); }
+/* Tabulator mounts menus on <body>, outside .tabulator */
+.tabulator-menu.tabulator-popup-container { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
+.tabulator-menu .tabulator-menu-item:not(.tabulator-menu-item-disabled):hover { background: var(--hover); }
+.tabulator-menu .tabulator-menu-separator { border-top-color: var(--bd); }
+.tabulator-menu .tabulator-menu-item.tabulator-menu-item-submenu:after { border-color: var(--muted); }
+
+.pill { display: inline-block; font-size: 0.65625rem; padding: 1px 6px; border-radius: 9px; margin: 1px; border: 1px solid var(--bd); background: var(--surface2); color: var(--muted); }
+.pill.ok { color: var(--ok); border-color: var(--ok-bd); background: var(--ok-bg); }
+.pill.warn { color: var(--warn); border-color: var(--warn-bd); background: var(--warn-bg); }
+.pill.danger { color: var(--danger); border-color: var(--danger-bd, var(--danger)); background: var(--danger-bg, transparent); }
+.pill.bad { color: var(--danger); border-color: var(--danger-bd); background: var(--danger-bg); }
+.tab { padding: 0.375rem 0.875rem; font-size: var(--fs-md); border-radius: 0.4375rem; cursor: pointer; }
+/* Themes may colour the selected tab and the main buttons (--tab-on-*, --primary-*); others keep grey/black. */
+.tab.on { background: var(--tab-on-bg, var(--sel)); color: var(--tab-on-fg, inherit); font-weight: 500; }
+.kl-fill { background: var(--primary-bg, var(--fg)); color: var(--primary-fg, var(--surface)); }
+.fld { height: 2.125rem; border-radius: var(--r-md); padding: 0 0.5rem; font-size: var(--fs-md); }
+textarea.fld { height: auto; padding: 0.375rem 0.5rem; line-height: 1.45; }
+
+/* ------------------------------------------------------------------ Primitives */
+
+/* Buttons: four roles. Primary is the one action a screen exists for; danger is
+   destructive and states its count in the label; quiet is incidental. */
+.kl-btn {
+  height: var(--ctl-h); padding: 0 0.625rem; border-radius: var(--r-md);
+  border: 1px solid var(--bd); background: var(--surface); color: var(--fg);
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.375rem; white-space: nowrap;
+}
+.kl-btn:hover { background: var(--hover); }
+.kl-btn:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.kl-btn[disabled] { opacity: .45; cursor: default; }
+.kl-btn.primary { background: var(--primary-bg, var(--fg)); color: var(--primary-fg, var(--surface)); border-color: var(--primary-bg, var(--fg)); font-weight: 500; }
+.kl-btn.danger { background: var(--danger-solid, var(--danger)); border-color: var(--danger-solid, var(--danger)); color: #fff; font-weight: 500; }
+.kl-btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.kl-btn.quiet:hover { color: var(--fg); background: var(--hover); }
+
+/* Cards: one shape. `.good` is for the number the screen is actually about. */
+.kl-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.kl-card { border: 1px solid var(--bd); border-radius: var(--r-md); padding: var(--sp-2) 0.625rem; background: var(--surface2); }
+.kl-card .k { font-size: var(--fs-xs); color: var(--muted); }
+.kl-card .v { font-size: var(--fs-lg); font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.kl-card .s { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; }
+.kl-cards.five { grid-template-columns: repeat(5, 1fr); }
+.kl-card.good { border-color: var(--ok-bd); background: var(--ok-bg); }
+.kl-card.good .k, .kl-card.good .v { color: var(--ok); }
+.kl-card.warn { border-color: var(--warn-bd); background: var(--warn-bg); }
+.kl-card.warn .k, .kl-card.warn .v { color: var(--warn); }
+@media (max-width: 640px) { .kl-cards, .kl-cards.five { grid-template-columns: repeat(2, 1fr); } }
+
+/* Lists: one height, one row shape. A truncated list says so in .kl-listfoot. */
+.kl-list { border: 1px solid var(--bd); border-radius: var(--r-md); max-height: 8.25rem; overflow: auto; background: var(--surface); }
+.kl-list .li { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); font-size: 0.71875rem; border-bottom: 1px solid var(--bd); }
+.kl-list .li:last-child { border-bottom: none; }
+.kl-list .li:nth-child(even) { background: var(--surface2); }
+.kl-listfoot { font-size: var(--fs-xs); color: var(--muted); padding: 2px 1px; }
+
+/* Section: a heading, an optional count, actions on the right. */
+.kl-sec { display: flex; flex-direction: column; gap: 0.375rem; }
+.kl-sec > .h { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); font-weight: 600; }
+.kl-sec > .h .count { color: var(--muted); font-weight: 400; }
+.kl-sec > .h .acts { margin-left: auto; display: flex; gap: 6px; }
+
+/* Footer bar: where a panel's actions live, instead of scattered through its sections. */
+.kl-footer { display: flex; align-items: center; gap: var(--sp-2); padding: 0.625rem var(--sp-4); border-top: 1px solid var(--bd); background: var(--surface2); }
+.kl-footer .spacer { flex: 1; }
+
+/* Tab strip inside a panel. Distinct from .tab, which is the app's top-level nav. */
+.kl-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--bd); padding: 0 var(--sp-4); }
+.kl-tabs .t { padding: 0.4375rem var(--sp-3); font-size: 0.78125rem; color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
+.kl-tabs .t.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--fg); }
+
+/* Segmented control: a small set of exclusive choices, inline. */
+.kl-seg { display: inline-flex; border: 1px solid var(--bd); border-radius: var(--r-md); overflow: hidden; }
+.kl-seg > * { padding: 0.125rem 0.5625rem; font-size: var(--fs-xs); color: var(--muted); cursor: pointer; }
+.kl-seg > .on { background: var(--sel); color: var(--fg); font-weight: 500; }
+/* Field height, for a Settings row next to selects and inputs. */
+.kl-seg.lg { height: 2.125rem; background: var(--surface2); }
+.kl-seg.lg > :not(template) { display: inline-flex; align-items: center; padding: 0 0.75rem; font-size: var(--fs-md); }
+.kl-seg.lg > :not(template) ~ :not(template) { border-left: 1px solid var(--bd); }
+
+/* Sort arrows only on the sorted column (and on hover) unless the setting asks for all. The
+   title's arrow gap goes too, so the header text gets that width back. */
+:root:not([data-sortarrows="all"]) .tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort="none"] .tabulator-col-title { padding-right: 0; }
+:root:not([data-sortarrows="all"]) .tabulator .tabulator-header .tabulator-col[aria-sort="none"]:not(:hover) .tabulator-col-sorter { display: none; }
+
+/* Chips: an exclusive choice among a longer, wrapping list (folder levels). */
+.kl-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.kl-chip { font-size: var(--fs-xs); padding: 0.0625rem 0.5rem; border: 1px solid var(--bd); border-radius: 9px; color: var(--muted); background: var(--surface); cursor: pointer; }
+.kl-chip:hover { background: var(--hover); }
+.kl-chip.on { background: var(--sel); color: var(--fg); border-color: var(--fg); font-weight: 500; }
+
+/* Live kopia output. */
+.kl-term { background: var(--term-bg); border: 1px solid var(--bd); border-radius: var(--r-md); color: var(--term-fg); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-xs); line-height: 1.65; padding: var(--sp-2) 0.625rem; overflow: auto; }
+.kl-term .t { color: var(--term-dim); }
+.kl-term .g { color: var(--ok); }
+.kl-term .w { color: var(--warn); }
+
+/* Stacked split of one total (file panel storage breakdown); each value is labelled beside it. */
+.kl-split { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bd); }
+.kl-split > i { display: block; height: 100%; }
+.kl-split > i.ok, .kl-key.ok { background: var(--ok); }
+.kl-split > i.warn, .kl-key.warn { background: var(--warn); }
+.kl-split > i.info, .kl-key.info { background: var(--accent); }
+.kl-split > i.rest, .kl-key { background: var(--faint); }
+.kl-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+/* Progress. */
+.kl-bar { height: 6px; border-radius: 3px; background: var(--bd); overflow: hidden; }
+.kl-bar > i { display: block; height: 100%; background: var(--fg); border-radius: 3px; }
+.kl-bar.busy > i { animation: kl-bar-busy 1.4s ease-in-out infinite; }
+@keyframes kl-bar-busy { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+
+/* Run bar: dry run / execute / copy command, on every destructive action. */
+.kl-runbar { border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--surface2); padding: 0.5625rem 0.625rem; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.kl-drag { width: 6px; flex: none; cursor: col-resize; border-radius: 3px; }
+.kl-drag:hover, .kl-drag:focus-visible { background: var(--bd); outline: none; }
+.kl-steps { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--faint); margin-top: 2px; }
+.kl-steps .on { color: var(--fg); font-weight: 600; }
+.kl-steps .done { color: var(--muted); }
+.kl-steps .sep { color: var(--faint); }
+.kl-choices { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-4); }
+.kl-choices .lbl { font-size: var(--fs-xs); font-weight: 500; margin-bottom: 4px; }
+
+/* A note explains a number. A callout changes a decision. Nothing else gets a box. */
+.kl-note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.45; }
+.kl-callout { border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn); border-radius: var(--r-md); padding: 0.375rem 0.5625rem; font-size: 0.71875rem; }
+.kl-callout.danger { border-color: var(--danger-bd); background: var(--danger-bg); color: var(--danger); font-weight: 500; }
+
+/* Pro: the tag on a locked button (and the header badge), and the notice it opens. */
+.protag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; line-height: 1.3; padding: 1px 5px; border-radius: 5px; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--accent-bd); }
+/* Brand colours: fixed per light/dark, not per theme (they match the website). */
+:root { --logo-main: #0f766e; --logo-mid: #2e9c91; --logo-accent: #f59e0b; }
+html.dark { --logo-main: #2dd4bf; --logo-mid: #11806f; --logo-accent: #fbbf24; }
+.kl-logo { width: 1.75rem; height: 1.75rem; flex-shrink: 0; margin-right: .4rem; }
+.kl-logo.sm { width: 1.1rem; height: 1.1rem; margin-right: 0; }
+.kl-logo .lm { fill: var(--logo-main); }
+.kl-logo .lmid { fill: var(--logo-mid); }
+.kl-logo .la { fill: var(--logo-accent); }
+.kl-logo .lring { fill: none; stroke: #0f766e; }
+/* Retention chips by type: KopiaUI's colours (htmlui src/css/Theme.css, light then dark). */
+.pill.rt { color: #fff; }
+.rt-latest { background: #5da745; } .rt-daily { background: #159489; } .rt-weekly { background: #f3712b; }
+.rt-monthly { background: #787a7d; } .rt-annual { background: #c49508; } .rt-other { background: #5b89b4; }
+html.dark .rt-latest { background: #498235; } html.dark .rt-daily { background: #127d74; } html.dark .rt-weekly { background: #c14b0b; }
+html.dark .rt-monthly { background: #6e7072; } html.dark .rt-annual { background: #c49508; } html.dark .rt-other { background: #47729a; }
+/* Folder icons in Name columns: amber, like the folder emoji they replaced. */
+:root { --folder-ic: #d99a1e; }
+html.dark { --folder-ic: #f0b93a; }
+.kl-folder-ic { color: var(--folder-ic); }
+/* Icon-only header buttons: the icon sits centred and a little larger than the text. */
+.kl-ibtn { display: inline-flex; align-items: center; justify-content: center; }
+.kl-ibtn .ic { font-size: 0.875rem; }
+
+/* Design menu choices (dev add-on): html[data-d-<key>]. Absent = what ships.
+   Icon swaps for these live in packaging/icons.json _variants. Remove a block once its choice is final. */
+html[data-d-chrome="tint"] .kl-chrome { background: var(--chrome-tint, var(--surface)); }
+html[data-d-hdrsize="15"] header .kl-ibtn .ic { font-size: 0.8125rem; }
+html[data-d-hdrsize="14"] header .kl-ibtn .ic { font-size: 0.75rem; }
+/* File and folder icons (Settings > Appearance; util.js itemIconHtml). Filled colours one per kind. */
+:root { --ft-image: #0891b2; --ft-audio: #9333ea; --ft-video: #dc2626; --ft-zip: #a16207; --ft-code: #16a34a;
+  --ft-text: #475569; --ft-pdf: #e11d48; --ft-doc: #2563eb; --ft-sheet: #059669; --ft-slides: #ea580c;
+  --ft-exe: #4f46e5; --ft-disk: #7c3aed; --ft-db: #0d9488; --ft-font: #db2777; --ft-file: #64748b; }
+html.dark { --ft-image: #22d3ee; --ft-audio: #c084fc; --ft-video: #f87171; --ft-zip: #facc15; --ft-code: #4ade80;
+  --ft-text: #cbd5e1; --ft-pdf: #fb7185; --ft-doc: #60a5fa; --ft-sheet: #34d399; --ft-slides: #fb923c;
+  --ft-exe: #a5b4fc; --ft-disk: #c4b5fd; --ft-db: #5eead4; --ft-font: #f472b6; --ft-file: #94a3b8; }
+/* Material and Fluent Emoji are images: --icd, or --icl where a set has a light-theme version. */
+.ic.kl-img-ic { -webkit-mask: none; mask: none; background: var(--icd) center / contain no-repeat; }
+html:not(.dark) .ic.kl-img-ic { background-image: var(--icl, var(--icd)); }
+.kl-emoji-ic { display: inline-block; width: 1.15em; text-align: center; font-style: normal; line-height: 1; }
+.pro-mark { font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; line-height: 1; margin: 3px 0 0 3px; color: var(--ok); cursor: default; }
+.kl-btn.patreon { background: #000; border-color: #000; color: #fff; display: inline-flex; align-items: center; gap: 6px; }
+.kl-btn.patreon:hover:not(:disabled) { background: #222; border-color: #222; }
+.kl-btn.danger .protag, .kl-btn.primary .protag { color: #fff; background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.4); }
+.kl-pronotice { position: fixed; width: 300px; max-width: calc(100vw - 32px); background: var(--surface); color: var(--fg); border: 1px solid var(--bd); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 12px; }
+.kl-pronotice .t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-sm); }
+.kl-pronotice p { margin: 4px 0 10px; font-size: var(--fs-sm); color: var(--muted); }
+.kl-pronotice .acts { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Confirm dialog's detailed shape: the what / how many / where / how table. */
+.kl-facts { border: 1px solid var(--bd); border-radius: var(--r-md); overflow: hidden; }
+.kl-facts .r { display: flex; gap: 0.625rem; padding: 0.3125rem 0.5625rem; font-size: var(--fs-sm); border-bottom: 1px solid var(--bd); }
+.kl-facts .r:last-child { border-bottom: none; }
+.kl-facts .r:nth-child(odd) { background: var(--surface2); }
+.kl-facts .k { width: 5.75rem; flex: none; color: var(--muted); font-size: var(--fs-xs); padding-top: 1px; }
+
+/* Policy editor rows: setting | this policy's value | value in effect. */
+.pe-rows { border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--surface); }
+.pe-head, .pe-row { display: grid; grid-template-columns: minmax(12rem, 1.1fr) minmax(13rem, 1fr) minmax(11rem, 1fr); gap: 0.625rem; padding: 0.4375rem 0.5625rem; }
+.pe-head { font-size: var(--fs-xs); color: var(--muted); border-bottom: 1px solid var(--bd); }
+.pe-row { border-bottom: 1px solid var(--bd-soft); align-items: start; font-size: var(--fs-sm); }
+.pe-row:last-child { border-bottom: none; }
+.pe-staged { background: var(--warn-bg); box-shadow: inset 3px 0 0 var(--warn); }
+.pe-ed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pe-e { font-variant-numeric: tabular-nums; }
+.pe-lock { grid-column: 2 / 4; font-size: var(--fs-xs); color: var(--muted); }
+.pe-adv { border-top: 1px solid var(--bd-soft); padding-top: 2px; }
+.pe-adv:first-child { border-top: none; }
+@media (max-width: 900px) { .pe-head { display: none; } .pe-row { grid-template-columns: 1fr; } .pe-lock { grid-column: 1; } }
+
+/* Tab toolbar: one row of controls above a table. */
+.kl-toolbar { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; min-height: var(--ctl-h); }
+.kl-toolbar .grow { flex: 1; }
+.kl-toolbar .fld { height: var(--ctl-h); }
+.kl-toolbar label { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); white-space: nowrap; }
+.kl-btn.on { background: var(--sel); border-color: var(--fg); }
+.kl-btn.icon { width: var(--ctl-h); justify-content: center; padding: 0; }
+
+/* Selection bar: replaces the toolbar's right end while rows are selected. */
+.kl-selbar { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0 0.25rem 0 0.5625rem; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--link) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--link) 35%, var(--bd)); }
+.kl-selbar > b { font-size: var(--fs-sm); font-weight: 600; margin-right: 4px; white-space: nowrap; }
+/* Floating selection bar (util.js SELBAR_FLOAT): over the bottom of the table, so selecting a row
+   never moves the toolbar or the rows under it. Its menus open upwards. */
+html[data-selbar="float"] .kl-selbar { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 35;
+  padding: 0.3rem 0.4rem 0.3rem 0.75rem; background: color-mix(in srgb, var(--link) 10%, var(--surface));
+  box-shadow: 0 10px 28px rgba(0,0,0,.22); max-width: calc(100vw - 2rem); flex-wrap: wrap; }
+html[data-selbar="float"] .kl-selbar .kl-menu { top: auto; bottom: calc(100% + 4px); }
+.kl-btn.dangerline { border-color: var(--danger-bd); color: var(--danger); }
+
+/* Small dropdown menu under a toolbar button (Delete ▾, ⋯). */
+.kl-dd { position: relative; display: inline-flex; }
+.kl-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 12.5rem; padding: 0.25rem 0;
+  background: var(--surface); border: 1px solid var(--bd); border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.kl-menu .hd { padding: 0.25rem 0.75rem 0.375rem; font-size: var(--fs-xs); color: var(--muted); border-bottom: 1px solid var(--bd-soft); margin-bottom: 3px; }
+.kl-menu button { display: block; width: 100%; text-align: left; padding: 0.375rem 0.75rem; font-size: var(--fs-sm); color: var(--fg); background: none; border: 0; cursor: pointer; white-space: nowrap; }
+.kl-menu button:hover { background: var(--hover); }
+.kl-menu button.dg { color: var(--danger); }
+.kl-menu .sep { height: 1px; margin: 3px 0; background: var(--bd-soft); }
+.kl-menu .kl-ovr-x { display: inline-flex; width: auto; padding: 0 0.25rem; color: var(--muted); opacity: 0; }
+.kl-ovr:hover .kl-ovr-x, .kl-menu .kl-ovr-x:focus-visible { opacity: 1; }
+/* A small corner mark on buttons that also have a right-click menu. */
+.kl-hasmenu { position: relative; }
+.kl-hasmenu::after { content: ""; position: absolute; right: 2px; bottom: 2px; border-style: solid; border-width: 0 0 4px 4px;
+  border-color: transparent transparent currentColor transparent; opacity: 0.45; pointer-events: none; }
+html[data-d-menumark="off"] .kl-hasmenu::after { display: none; }
+
+/* Filter chips: an active filter, cleared with one click. */
+.kl-fchip { display: inline-flex; align-items: center; gap: 0.3125rem; height: 1.5rem; padding: 0 0.25rem 0 0.5625rem; border-radius: 0.75rem; font-size: var(--fs-xs);
+  border: 1px solid var(--bd); background: var(--surface2); color: var(--fg); white-space: nowrap; }
+.kl-fchip b { font-weight: 500; color: var(--muted); }
+.kl-fchip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 0.1875rem; font-size: 0.8125rem; line-height: 1; }
+.kl-fchip button:hover { color: var(--fg); }
+
+/* Help: a small "?" whose tooltip explains the thing next to it (hover or keyboard focus). */
+.kl-help { display: inline-flex; align-items: center; justify-content: center; width: 0.9375rem; height: 0.9375rem; border-radius: 50%;
+  font-size: 0.625rem; font-weight: 600; line-height: 1; color: var(--muted); border: 1px solid var(--bd); background: var(--surface);
+  cursor: help; vertical-align: super; margin-left: 2px; }
+.kl-help:hover, .kl-help:focus-visible { color: var(--fg); border-color: var(--fg); outline: none; }
+.kl-help[data-doc] { cursor: pointer; }
+
+/* Documentation pages (docs.js renders docs/*.md here). */
+.kl-doc { font-size: var(--fs-md); line-height: 1.65; color: var(--fg); }
+.kl-doc > * { max-width: 52rem; }
+.kl-doc > * + * { margin-top: 0.75em; }
+.kl-doc h1 { font-size: 1.5em; font-weight: 600; margin-bottom: 0.5em; }
+.kl-doc h2 { font-size: 1.2em; font-weight: 600; margin-top: 1.6em; padding-bottom: 0.25em; border-bottom: 1px solid var(--bd-soft); }
+.kl-doc h3 { font-size: 1.05em; font-weight: 600; margin-top: 1.3em; }
+.kl-doc h1, .kl-doc h2, .kl-doc h3 { scroll-margin-top: 0.75rem; }
+.kl-doc a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.kl-doc ul { list-style: disc; padding-left: 1.4em; }
+.kl-doc ol { list-style: decimal; padding-left: 1.4em; }
+.kl-doc li + li { margin-top: 0.25em; }
+.kl-doc code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.9em; padding: 0.1em 0.3em; border-radius: var(--r-sm); background: var(--surface2); }
+.kl-doc pre { padding: 0.75em 1em; border-radius: var(--r-md); background: var(--surface2); overflow-x: auto; }
+.kl-doc pre code { padding: 0; background: none; }
+.kl-doc blockquote { padding-left: 0.9em; border-left: 3px solid var(--bd); color: var(--muted); }
+.kl-doc table { border-collapse: collapse; display: block; overflow-x: auto; }
+.kl-doc th, .kl-doc td { border: 1px solid var(--bd); padding: 0.35em 0.7em; text-align: left; vertical-align: top; }
+.kl-doc th { background: var(--head); font-weight: 600; }
+.kl-doc img { max-width: 100%; border-radius: var(--r-md); border: 1px solid var(--bd-soft); }
+/* A screenshot not taken yet: a dashed box saying what goes there. */
+.kl-doc-ph { display: flex; align-items: center; justify-content: center; min-height: 7rem; padding: 1rem;
+  border: 1px dashed var(--bd); border-radius: var(--r-md); color: var(--muted); font-size: var(--fs-xs); text-align: center; background: var(--surface2); }
+
+/* Share of a folder, as a bar plus its number. */
+.kl-sharebar { display: inline-block; width: 52px; height: 6px; margin-right: 7px; border-radius: 3px; background: var(--bd-soft); vertical-align: middle; overflow: hidden; }
+.kl-sharebar > i { display: block; height: 100%; background: var(--accent); }
+
+/* Table footer: the result count and pages under the table. */
+.kl-tablefoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--muted); padding: 2px 2px 0; }
+.kl-tablefoot b { color: var(--fg); font-weight: 600; }
+.kl-tablefoot .grow { flex: 1; }
+
+/* The in-app tour (Driver.js) in the app's colours, fonts and themes. */
+.driver-popover.kl-tour { font-family: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--bd); border-radius: 8px; max-width: 320px; }
+.driver-popover.kl-tour .driver-popover-title { font-size: var(--fs-md); font-weight: 600; }
+.driver-popover.kl-tour .driver-popover-description { font-size: var(--fs-sm); }
+.driver-popover.kl-tour .driver-popover-progress-text { color: var(--muted); font-size: var(--fs-xs); }
+.driver-popover.kl-tour .driver-popover-footer-btn { color: var(--fg); background: var(--surface); border-color: var(--bd); border-radius: 6px; padding: 3px 10px; text-shadow: none; }
+.driver-popover.kl-tour .driver-popover-footer-btn:hover, .driver-popover.kl-tour .driver-popover-footer-btn:focus-visible { background: var(--hover); }
+.driver-popover.kl-tour .driver-popover-close-btn { color: var(--muted); }
+.driver-popover.kl-tour .driver-popover-arrow { display: none; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Settings: a changed setting's reset button (settings.js x-kl-default). */
+.kl-setting { position: relative; }
+.kl-reset-one { margin-left: 0.375rem; padding: 0.125rem; border-radius: var(--r-md); color: var(--muted); line-height: 1; vertical-align: middle; visibility: hidden; }
+.kl-reset-one:hover { color: var(--fg); background: var(--hover); }
+:hover > .kl-setting > .kl-reset-one, :focus-within > .kl-setting > .kl-reset-one { visibility: visible; }
+@media (hover: none) { .kl-reset-one { visibility: visible; } }
+/* Settings search, in place (settings.js _klSearchSetup): sections in list order, only the matching rows. */
+.kl-searching { display: flex; flex-direction: column; gap: 1.5rem; }
+.kl-searching > .kl-search-top { order: -1; }
+.kl-searching section > :not(.kl-search-head):not([data-kl-row]):not([data-kl-rows]),
+.kl-searching section[data-kl-app] > :not(.kl-search-head),
+.kl-searching .kl-miss { display: none !important; }
+.kl-search-head { display: flex; align-items: center; gap: 0.75rem; min-width: 0; padding-bottom: 0.375rem; border-bottom: 1px solid var(--bd-soft); font-size: 0.75rem; }
+.kl-nav-count { display: inline-block; margin-left: 0.375rem; padding: 0 0.375rem; border-radius: 9999px; background: var(--sel); color: var(--muted); font-size: 0.6875rem; line-height: 1.25rem; vertical-align: middle; }

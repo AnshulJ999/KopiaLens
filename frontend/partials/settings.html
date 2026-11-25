@@ -1,0 +1,785 @@
+{% from "partials/_macros.html" import duration, needs_kopia, time_chips, time_seg %}
+    <div x-show="showSettings" @click.self="showSettings=false" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4 sm:p-6">
+      <!-- One fixed height with a scrolling body, so the section list never moves. Every control
+           SAVES ITSELF on change (saveKl), so the footer carries no Save button and closing the
+           modal can never discard an edit. -->
+      <div class="w-[60rem] max-w-full h-[min(88vh,50rem)] flex flex-col rounded-lg border border-bd bg-surface shadow-xl"
+           data-testid="settings-modal" @keydown.window="settingsSearchKey($event)"
+           x-init="$watch('settingsQuery', (q) => settingsQueryChanged(q))" x-effect="settingsSearching && klMeasure(settingsHits(), autostart, about)">
+
+        <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+          <div class="font-medium">Settings</div>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openSettingsDocs()" @keydown.enter.prevent="openSettingsDocs()" title="Help for this section">?</span>
+          <input type="search" autocomplete="off" x-model="settingsQuery" placeholder="Search settings" aria-label="Search settings"
+                 title="Search settings (Ctrl+F or /)" data-testid="settings-search"
+                 @keydown.escape="if (settingsQuery) { settingsQuery = ''; $event.stopPropagation(); }"
+                 class="fld h-8 border border-bd bg-surface2 ml-2 min-w-0 flex-1 max-w-[22rem]">
+          <button @click="showSettings=false" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="flex min-h-0 flex-1">
+          <nav class="w-36 sm:w-44 shrink-0 overflow-y-auto border-r border-bd p-2 text-sm">
+            <template x-for="g in settingsNav()" :key="g[0]">
+              <div class="mb-2">
+                <div class="px-2 pt-1 pb-0.5 text-[0.6875rem] text-faint" x-text="g[0]"></div>
+                <template x-for="s in g[1]" :key="s[0]">
+                  <button @click="settingsQuery = ''; settingsTab = s[0]"
+                          :class="settingsSearching ? 'w-full text-left rounded px-2 py-1.5 hover:bg-head' + ((s[0] in settingsCounts) ? '' : ' opacity-40')
+                            : (settingsTab===s[0] || (s[0]==='indexing' && settingsTab==='refresh')) ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
+                          ><span x-text="s[1]"></span><span x-show="settingsSearching && settingsCounts[s[0]]" class="kl-nav-count" x-text="settingsCounts[s[0]]"></span></button>
+                </template>
+              </div>
+            </template>
+          </nav>
+
+          <div class="flex-1 min-w-0 overflow-y-auto p-4 text-sm" x-ref="settingsBody" :class="settingsSearching && 'kl-searching'" data-testid="settings-body">
+            <div x-show="settingsSearching" class="kl-search-top text-xs text-muted" data-testid="settings-results">
+              <span x-show="klSearchTotal()" x-text="countOf(klSearchTotal(), 'result')"></span>
+              <span x-show="!klSearchTotal()">
+                <span x-text="settingsQuery.trim().toLowerCase() === 'changed' ? 'Every setting is at its default.' : 'No settings match \u201c' + settingsQuery.trim() + '\u201d.'"></span>
+                <button class="underline" @click="settingsQuery = ''">Clear</button>
+              </span>
+            </div>
+
+            <section x-show="settingsTab==='general'" class="space-y-4">
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="number_style">Numbers</span>
+                  <select autocomplete="off" x-model="numberStyle" @change="saveKl('number_style')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="system" x-text="'System (' + sysFormatSamples().num + ')'"></option>
+                    <option value="en-US">1,234,567.8 (US/UK)</option>
+                    <option value="de-DE">1.234.567,8 (Europe)</option>
+                    <option value="fr-FR">1 234 567,8 (SI / ISO)</option>
+                    <option value="en-IN">12,34,567.8 (Indian)</option>
+                  </select></div>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="byte_units">Sizes</span>
+                  <select autocomplete="off" x-model="byteUnits" @change="saveKl('byte_units')" class="fld border border-bd bg-surface2 w-48" data-testid="byte-units">
+                    <option value="decimal">Decimal (1 GB = 1000 MB)</option>
+                    <option value="binary">Binary (1 GiB = 1024 MiB)</option>
+                  </select></div>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="date_style">Dates</span>
+                  <select autocomplete="off" x-model="dateStyle" @change="saveKl('date_style')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="system" x-text="'System (' + sysFormatSamples().date + ')'"></option>
+                    <option value="dmy" x-text="new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
+                    <option value="mdy" x-text="new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
+                    <option value="iso" x-text="_isoDay(new Date())"></option>
+                  </select></div>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="clock">Times</span>
+                  <span class="flex items-center gap-2">
+                    <select autocomplete="off" x-model="clock" @change="saveKl('clock')" class="fld border border-bd bg-surface2">
+                      <option value="system" x-text="'System (' + sysFormatSamples().clock + ')'">System clock</option>
+                      <option value="12">12-hour</option>
+                      <option value="24">24-hour</option>
+                    </select>
+                    <select autocomplete="off" :value="timeFmt" @change="setTimeFmt($event.target.value)" class="fld border border-bd bg-surface2">
+                      <option value="auto">Automatic</option>
+                      <option value="relative">Relative (5 min ago)</option>
+                      <option value="absolute">Exact (9:14 PM)</option>
+                    </select>
+                  </span></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Automatic shows how long ago for recent activity (Dashboard, Tasks, backups) and dates for history (Snapshots, Search, Tree, versions). The header's clock button switches too, and a column can keep its own choice: right-click its header.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="header_search_only">Search boxes</span>
+                  <select autocomplete="off" :value="headerSearchOnly ? 'one' : 'two'" @change="headerSearchOnly = $event.target.value === 'one'; saveKl('header_search_only')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="two">Header and Search tab</option>
+                    <option value="one">Header only</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Header only: the Search tab uses the box at the top and drops its own.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="search_dedupe_by">Dedupe in Search merges</span>
+                  <select autocomplete="off" x-model="dedupeBy" @change="saveKl('search_dedupe_by')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="path">Same path</option>
+                    <option value="content">Identical content</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Same path: one row per file, even when nested sources back it up. Identical content: one row for files with the same bytes, wherever they are.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="ask_snapshot_now">Ask before Snapshot now</span>
+                  <button @click="askSnapshotNow = !askSnapshotNow; saveKl('ask_snapshot_now')" class="h-8 rounded border border-bd px-3" data-testid="ask-snapshot-now" x-text="askSnapshotNow ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Off: Snapshot now starts straight away, as in KopiaUI.</p>
+              </div>
+              <div x-kl-row x-show="host.native_picker_possible">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="folder_picker">Folder picker</span>
+                  <select autocomplete="off" x-model="folderPicker" @change="saveKl('folder_picker')" class="fld border border-bd bg-surface2">
+                    <option value="auto">Automatic</option>
+                    <option value="native">Windows dialog</option>
+                    <option value="browser">KopiaLens folder list</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">What Browse… opens in a browser. Automatic shows the folder list. The Windows dialog only opens for a browser on this PC. The desktop app always uses the Windows dialog.</p>
+              </div>
+              <div x-kl-row x-show="host.os !== 'windows' && !host.docker">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="mount_dir">Snapshot mount folder</span>
+                  <input autocomplete="off" x-model="mountDir" @change="saveKl('mount_dir')" class="fld border border-bd bg-surface2 min-w-[18rem] font-mono" :placeholder="host.mount.dir || ''"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Mounted snapshots appear in folders inside this one.</p>
+              </div>
+              <div x-kl-row x-show="host.docker">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="mount_host_path">Mount folder on the host</span>
+                  <input autocomplete="off" x-model="mountHostPath" @change="saveKl('mount_host_path')" class="fld border border-bd bg-surface2 min-w-[18rem] font-mono" placeholder="/mnt/kopialens"></div>
+                <p class="text-[0.6875rem] text-muted mt-1" x-text="'The host folder mapped to ' + (host.mount.dir || '/mounts') + ' in the container. Mount paths are shown as this folder.'"></p>
+              </div>
+            </section>
+
+{% include "partials/appearance.html" %}
+{% include "partials/repos.html" %}
+{% include "partials/account.html" %}
+{% include "partials/remoteaccess.html" %}
+{% include "partials/writemode.html" %}
+{% include "partials/tokens.html" %}
+{% include "partials/appconfig.html" %}
+{% include "partials/updates.html" %}
+{% include "partials/licence.html" %}
+
+            <section x-show="settingsTab==='indexing' || settingsTab==='refresh'" class="space-y-4">
+{{ needs_kopia() }}
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_mode">Kopia indexing</span>
+                  <select autocomplete="off" x-model="indexMode" @change="saveKl('index_mode')" class="fld border border-bd bg-surface2">
+                    <option value="daily">Once a day, at a set time</option>
+                    <option value="interval">Every N hours</option>
+                    <option value="off">Off, only when I start it</option>
+                  </select></div>
+                <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='daily'"><span class="shrink-0" x-kl-default="index_time">Run at</span>
+                  {{ time_seg('indexTime', "saveKl('index_time')") }}</div>
+                <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='interval'"><span x-kl-default="index_interval">Every</span>
+                  <select autocomplete="off" x-model.number="indexInterval" @change="saveKl('index_interval')" class="fld border border-bd bg-surface2">
+                    <option value="14400">4 hours</option>
+                    <option value="21600">6 hours</option>
+                    <option value="43200">12 hours</option>
+                    <option value="86400">24 hours</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Reads only new snapshots, one repository at a time. Missed runs catch up when the PC is back on.</p>
+                <p x-show="(repos || []).some((r) => r.kind === 'backblaze')" class="text-[0.6875rem] text-muted">Backblaze indexes on its own schedule.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span>Pause indexing</span>
+                  <div x-show="!indexPause.paused" class="flex flex-wrap justify-end gap-1">
+                    <template x-for="c in pauseChoices()" :key="c[0]"><button @click="pauseIndexing(c[0])" class="kl-btn" x-text="c[1]"></button></template>
+                    <button @click="pauseIndexing('custom')" class="kl-btn">Custom…</button>
+                  </div>
+                  <div x-show="indexPause.paused" class="flex items-center gap-2">
+                    <span class="text-xs" style="color:var(--warn)" x-text="pauseText()"></span>
+                    <button @click="resumeIndexing()" class="kl-btn">Resume</button>
+                  </div></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Automatic indexing waits until the pause ends, even across a restart. Starting an index yourself still works.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="dashboard_mode">Dashboard numbers</span>
+                  <select autocomplete="off" x-model="dashboardMode" @change="saveKl('dashboard_mode')" class="fld border border-bd bg-surface2">
+                    <option value="nightly">Rebuild with nightly indexing</option>
+                    <option value="interval">Also rebuild during the day</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Rebuilding the Dashboard's size columns takes a while, so by default it happens with nightly indexing. &#8635; Refresh rebuilds them any time.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span>Full rebuild</span>
+                  <button @click="rebuildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded border border-bd px-3 disabled:opacity-50">Rebuild full index</button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Reads every snapshot again instead of only what changed. Rarely needed, and much slower.</p>
+              </div>
+
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium" data-testid="settings-index-backups">Index backups</div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_keep_versions">Keep older versions</span>
+                  <select autocomplete="off" x-model.number="indexKeepVersions" @change="saveKl('index_keep_versions')" class="fld border border-bd bg-surface2">
+                    <option :value="0">Off</option>
+                    <option :value="1">1</option>
+                    <option :value="2">2</option>
+                    <option :value="3">3</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">If the index is damaged, KopiaLens switches to the newest good version and tells you. Changes apply at the next index. <span x-text="ixVersionsText()"></span></p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_backup_dir">Copy to a folder</span>
+                  <div class="flex items-center gap-2">
+                    <input autocomplete="off" type="text" x-model.trim="indexBackupDir" @change="saveKl('index_backup_dir')" placeholder="Off" class="fld border border-bd bg-surface2" style="width:16rem" aria-label="Folder for the index copy">
+                    <button @click="ixCopyNow()" :disabled="!indexBackupDir || ixCopyBusy()" class="kl-btn" x-text="ixCopyBusy() ? 'Copying…' : 'Copy now'">Copy now</button>
+                  </div></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Updated after each index. A folder on another drive keeps a copy if this one fails.</p>
+                <template x-for="c in ixCopyLines()" :key="c.repo">
+                  <p class="text-[0.6875rem] mt-0.5" :class="c.ok ? 'text-muted' : ''" :style="c.ok ? '' : 'color:var(--warn)'" x-text="c.text"></p>
+                </template>
+              </div>
+
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium">Refresh</div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="light_interval,light_mode">Quick refresh</span>
+                  <span class="flex items-center gap-2">
+                    <select autocomplete="off" x-model.number="lightInterval" @change="saveKl('light_interval')" :disabled="lightMode === 'off'" class="fld border border-bd bg-surface2 disabled:opacity-50" aria-label="How often">
+                      <option value="300">5 minutes</option>
+                      <option value="600">10 minutes</option>
+                      <option value="900">15 minutes</option>
+                      <option value="1800">30 minutes</option>
+                      <option value="3600">1 hour</option>
+                      <option value="7200">2 hours</option>
+                      <option value="14400">4 hours</option>
+                      <option value="21600">6 hours</option>
+                    </select>
+                    <select autocomplete="off" x-model="lightMode" @change="saveKl('light_mode')" class="fld border border-bd bg-surface2" aria-label="When" data-testid="light-mode">
+                      <option value="in_use">While you use KopiaLens</option>
+                      <option value="always">Always</option>
+                      <option value="off">Off, nightly only</option>
+                    </select>
+                  </span></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Keeps next snapshot times and the Search start page current. Repository details refresh once a day, and when you open them.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="dashboard_refresh">Dashboard auto-refresh</span>
+                  <select autocomplete="off" x-model.number="dashRefresh" @change="saveKl('dashboard_refresh')" class="fld border border-bd bg-surface2">
+                    <option value="0">Off</option>
+                    <option value="300">5 minutes</option>
+                    <option value="900">15 minutes</option>
+                    <option value="1800">30 minutes</option>
+                    <option value="3600">1 hour</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How often an open Dashboard checks for new numbers.</p>
+              </div>
+              <div x-kl-row x-show="dashboardMode === 'interval'">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="dashboard_interval">Dashboard rebuild interval</span>
+                  <select autocomplete="off" x-model.number="dashboardInterval" @change="saveKl('dashboard_interval')" class="fld border border-bd bg-surface2">
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
+                    <option value="14400">4 hours</option>
+                    <option value="28800">8 hours</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How often the Dashboard's size columns are rebuilt during the day.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='desktop'" x-effect="(settingsTab==='desktop' || settingsSearching) && (loadAutostart(), !about && loadAbout())" class="space-y-4" data-testid="settings-desktop">
+              <p class="text-[0.6875rem] text-muted">For the KopiaLens desktop app and its tray icon.</p>
+              <div x-kl-row x-show="autostart && autostart.available">
+                <div class="flex items-center justify-between gap-3"><span>Start at logon</span>
+                  <button @click="setAutostart(!autostart.on)" :disabled="autostartBusy" class="h-8 rounded border border-bd px-3" data-testid="autostart"
+                          x-text="autostartBusy ? 'Changing…' : autostart && autostart.on ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">KopiaLens starts in the tray when you sign in to this computer.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="desktop_signin">Sign in automatically</span>
+                  <button @click="desktopSignin = !desktopSignin; saveKl('desktop_signin')" class="h-8 rounded border border-bd px-3" data-testid="desktop-signin"
+                          x-text="desktopSignin ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">The desktop app opens signed in. Browsers still ask for the password.</p>
+              </div>
+              <template x-if="!about || about.platform !== 'linux'">
+                <div class="space-y-4" data-kl-rows>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="tray_click">Clicking the tray icon</span>
+                      <select autocomplete="off" x-model="trayClick" @change="saveKl('tray_click')" class="fld border border-bd bg-surface2 w-44" data-testid="tray-click">
+                        <option value="window">Opens KopiaLens</option>
+                        <option value="menu">Shows the menu</option>
+                      </select></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Right-clicking always shows the menu.</p>
+                  </div>
+                  <div x-kl-row class="flex items-center justify-between gap-3"><span x-kl-default="tray_double_click">Double-clicking the tray icon</span>
+                    <select autocomplete="off" x-model="trayDoubleClick" @change="saveKl('tray_double_click')" class="fld border border-bd bg-surface2 w-44" data-testid="tray-double-click">
+                      <option value="window">Opens KopiaLens</option>
+                      <option value="none">Does nothing</option>
+                    </select></div>
+                  <div x-kl-row>
+                    <div class="text-sm mb-2" x-kl-default="tray_icon">Tray icon</div>
+                    <div class="flex flex-wrap gap-1.5" data-testid="tray-icon">
+                      <template x-for="t in TRAY_ICONS" :key="t[0]">
+                        <button @click="trayIcon = t[0]; saveKl('tray_icon')" class="flex items-center gap-2 h-9 rounded border px-2 text-xs"
+                                :class="trayIcon === t[0] ? 'border-fg bg-sel font-medium' : 'border-bd'">
+                          <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-[#202024]"><img :src="appUrl('/static/logos/tray/' + t[0] + '.png')" alt="" class="w-5 h-5"></span>
+                          <span x-text="t[1]"></span>
+                        </button>
+                      </template>
+                    </div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Shown on a dark taskbar. Changes within a few seconds.</p>
+                  </div>
+                </div>
+              </template>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="notifications">Notifications</span>
+                  <select autocomplete="off" x-model="notifyLevel" @change="saveKl('notifications')" class="fld border border-bd bg-surface2 w-44" data-testid="notify-level">
+                    <option value="all">All</option>
+                    <option value="warnings">Warnings and errors</option>
+                    <option value="off">Off</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">All includes finished indexing and finished jobs.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='notifications'" x-effect="settingsTab==='notifications' && !notifyHook && notifyInit()" class="space-y-5" data-testid="settings-notifications">
+              <template x-if="notifyHook">
+                <div class="space-y-2">
+                  <div class="font-medium">From KopiaLens</div>
+                  <p class="text-[0.6875rem] text-muted">Failed jobs, failed backups and maintenance, and another app taking over backups. Plain text works with ntfy.</p>
+                  <label class="flex flex-col gap-1 text-xs">Webhook address
+                    <input autocomplete="off" x-model="notifyHook.url" class="fld border border-bd bg-surface2 font-mono" placeholder="https://ntfy.sh/my-backups" data-testid="notify-webhook-url"></label>
+                  <div class="flex flex-wrap gap-3 text-xs">
+                    <label class="flex items-center gap-2">Format
+                      <select autocomplete="off" x-model="notifyHook.format" class="fld border border-bd bg-surface2"><option value="text">Plain text</option><option value="json">JSON</option></select></label>
+                    <label class="flex items-center gap-2">Send
+                      <select autocomplete="off" x-model="notifyHook.level" class="fld border border-bd bg-surface2"><option value="error">Errors only</option><option value="warn">Warnings and errors</option><option value="info">Everything</option></select></label>
+                  </div>
+                  <label class="flex flex-col gap-1 text-xs">Extra headers, one per line
+                    <textarea autocomplete="off" x-model="notifyHook.headers" rows="2" class="fld border border-bd bg-surface2 font-mono" placeholder="Authorization: Bearer tk_…"></textarea></label>
+                  <div class="flex gap-2">
+                    <button class="kl-btn" @click="notifyHookSave()">Save</button>
+                    <button class="kl-btn" @click="notifyHookTest()" :disabled="!notifyHook.url.trim() || notifyHook.busy" x-text="notifyHook.busy ? 'Sending…' : 'Send a test'"></button>
+                  </div>
+                </div>
+              </template>
+
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-medium">From kopia</span>
+                  <select autocomplete="off" x-model="notifyRepo" @change="notifyForm = null; notifyLoad()" class="fld border border-bd bg-surface2 text-xs" aria-label="Repository" x-show="notifyRepos().length > 1">
+                    <template x-for="r in notifyRepos()" :key="r.id"><option :value="r.id" :selected="r.id == notifyRepo" x-text="r.name"></option></template>
+                  </select>
+                  <span class="grow"></span>
+                  <button class="kl-btn" @click="notifyEdit(null)" x-show="notifyRepo && !notifyForm">Add profile…</button>
+                </div>
+                <p class="text-[0.6875rem] text-muted">Backup reports and errors from kopia itself. Profiles live in the repository, so KopiaUI and the kopia command line use them too.</p>
+{{ needs_kopia() }}
+                <template x-if="notifyProfiles">
+                  <div>
+                    <div x-show="notifyProfiles.loading" class="kl-note">Loading…</div>
+                    <p x-show="notifyProfiles.error" class="text-xs text-danger" x-text="notifyProfiles.error"></p>
+                    <div x-show="!notifyProfiles.loading && !notifyProfiles.error && !notifyProfiles.list.length && !notifyForm" class="kl-note">No profiles yet. Add one to get kopia's backup reports by email, Pushover or webhook.</div>
+                    <div class="kl-list" x-show="notifyProfiles.list.length">
+                      <template x-for="p in notifyProfiles.list" :key="p.name">
+                        <div class="li">
+                          <span class="font-medium shrink-0" x-text="p.name"></span>
+                          <span class="kl-note shrink-0" x-text="p.type"></span>
+                          <span class="grow min-w-0 truncate text-xs" x-text="notifySummary(p)"></span>
+                          <span class="kl-note shrink-0" x-text="notifySeverityName(p.min_severity)"></span>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyTest(p)">Test</button>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyEdit(p)">Edit</button>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyDelete(p)">Delete</button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="notifyForm">
+                  <div class="rounded border border-bd p-3 space-y-2 text-xs" data-testid="notify-form">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <label class="flex flex-col gap-1">Profile name
+                        <input autocomplete="off" x-model="notifyForm.name" :disabled="!notifyForm.isNew" class="fld border border-bd bg-surface2"></label>
+                      <label class="flex flex-col gap-1">Send by
+                        <select autocomplete="off" x-model="notifyForm.type" :disabled="!notifyForm.isNew" class="fld border border-bd bg-surface2">
+                          <option value="email">Email</option><option value="pushover">Pushover</option><option value="webhook">Webhook</option></select></label>
+                      <label class="flex flex-col gap-1">Send
+                        <select autocomplete="off" x-model="notifyForm.min_severity" class="fld border border-bd bg-surface2">
+                          <option value="error">Errors only</option><option value="warning">Warnings and errors</option><option value="report">Reports and up</option><option value="success">Successes and up</option><option value="verbose">Everything</option></select></label>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <template x-for="fd in notifyFields(notifyForm.type)" :key="notifyForm.type + fd[0]">
+                        <label class="flex flex-col gap-1"><span x-text="fd[1]"></span>
+                          <input x-model="notifyForm.fields[fd[0]]" :type="notifySecret(fd[0]) ? 'password' : 'text'" autocomplete="off" class="fld border border-bd bg-surface2"
+                                 :placeholder="notifySecret(fd[0]) && notifyForm.secretSet[fd[0]] ? 'Unchanged' : fd[2]"></label>
+                      </template>
+                      <label class="flex flex-col gap-1" x-show="notifyForm.type === 'webhook'">Method
+                        <select autocomplete="off" x-model="notifyForm.method" class="fld border border-bd bg-surface2"><option>POST</option><option>PUT</option></select></label>
+                      <label class="flex flex-col gap-1">Message format
+                        <select autocomplete="off" x-model="notifyForm.format" class="fld border border-bd bg-surface2"><option value="">Default</option><option value="html">HTML</option><option value="txt">Plain text</option></select></label>
+                    </div>
+                    <label class="flex flex-col gap-1" x-show="notifyForm.type === 'webhook'">Headers, one per line
+                      <textarea autocomplete="off" x-model="notifyForm.headers" rows="2" class="fld border border-bd bg-surface2 font-mono" placeholder="Title: Backup report"></textarea></label>
+                    <p x-show="notifyForm.error" class="text-danger" x-text="notifyForm.error"></p>
+                    <div class="flex gap-2 justify-end">
+                      <button class="kl-btn" @click="notifyForm = null">Cancel</button>
+                      <button class="kl-btn" :disabled="notifyForm.busy || !notifyForm.name.trim()" @click="notifySave(true)">Save and send a test</button>
+                      <button class="kl-btn primary" :disabled="notifyForm.busy || !notifyForm.name.trim()" @click="notifySave(false)" x-text="notifyForm.busy ? 'Saving…' : 'Save'"></button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='diskscan'" class="space-y-4" data-testid="settings-diskscan">
+              <p class="text-[0.6875rem] text-muted">How KopiaLens reads what is on disk: the Excluded tab, rule previews and folder sizes in New snapshot.</p>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_lookup">Read the disk with</span>
+                  <select autocomplete="off" x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2" data-testid="disk-lookup-mode">
+                    <option value="auto" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Automatic</option>
+                    <option value="everything" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything</option>
+                    <option value="scan">KopiaLens scanner</option>
+                    <option value="off">Off</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'everything'">Everything is a free Windows file index by voidtools. It answers at once and never reads the disk itself.</p>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'auto'">Automatic uses Everything when it's running, otherwise the KopiaLens scanner.</p>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'auto' || diskLookupMode === 'scan'">The KopiaLens scanner counts folders by reading the disk. It never changes a file, but a big drive stays busy while it's counted.</p>
+                <p class="text-[0.6875rem] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
+                   x-text="diskLookupText()"></p>
+                <a x-show="diskLookup && diskLookup.everything && diskLookup.everything.supported && !diskLookup.everything.installed && (diskLookupMode === 'everything' || diskLookupMode === 'auto')"
+                   class="kl-btn mt-2 inline-flex" href="https://www.voidtools.com/downloads/" target="_blank" rel="noopener">Get Everything</a>
+              </div>
+              <template x-if="diskLookupMode === 'auto' || diskLookupMode === 'scan'">
+                <div class="space-y-4" data-kl-rows data-testid="disk-scanner-options">
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_scan_budget">Scan time limit</span>
+                      {{ duration('diskScanBudget', 'disk_scan_budget', 1) }}</div>
+                    <p class="text-[0.6875rem] text-muted mt-1">How long a folder you open is counted while you wait. Folders that need longer show "Not counted".</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_scan_background">Keep counting after the time limit</span>
+                      <button @click="diskScanBackground = !diskScanBackground; saveKl('disk_scan_background')" class="h-8 rounded border border-bd px-3" x-text="diskScanBackground ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">A folder you open is counted to the end, even after you leave it. Shown in the Excluded tab with Stop.</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_count_drives">Count drives and places on their own</span>
+                      <button @click="diskCountDrives = !diskCountDrives; saveKl('disk_count_drives')" class="h-8 rounded border border-bd px-3" x-text="diskCountDrives ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">The Excluded tab counts each drive's total when it opens. A big drive takes a while.</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_ignore_search">Look for ignore files when indexing</span>
+                      <button @click="diskIgnoreSearch = !diskIgnoreSearch; saveKl('disk_ignore_search')" class="h-8 rounded border border-bd px-3" x-text="diskIgnoreSearch ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Each index run searches this computer's backed-up folders for ignore files (like .kopiaignore) that the backups leave out.</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_follow_links">Follow links</span>
+                      <button @click="diskFollowLinks = !diskFollowLinks; saveKl('disk_follow_links')" class="h-8 rounded border border-bd px-3" x-text="diskFollowLinks ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Count what links and junctions point to. Backups keep the link itself, so sizes then come out larger than the backups.</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_scan_threads">Scanner threads</span>
+                      <select autocomplete="off" x-model.number="diskScanThreads" @change="saveKl('disk_scan_threads')" class="fld border border-bd bg-surface2">
+                        <option value="0">Automatic</option>
+                        <template x-for="n in [1, 2, 4, 8, 16]" :key="n"><option :value="n" x-text="n" :selected="n === diskScanThreads"></option></template>
+                      </select></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Automatic uses up to 8 on an SSD and 2 on a hard disk, a USB drive or a network share.</p>
+                  </div>
+                  <div x-kl-row>
+                    <div class="flex items-center justify-between gap-3"><span x-kl-default="disk_sizes_minutes">Keep counted sizes</span>
+                      <select autocomplete="off" x-model.number="diskSizesMinutes" @change="saveKl('disk_sizes_minutes')" class="fld border border-bd bg-surface2">
+                        <option value="0">Until you recount</option>
+                        <template x-for="n in [60, 15, 5]" :key="n"><option :value="n" x-text="n === 60 ? 'For 1 hour' : 'For ' + n + ' minutes'" :selected="n === diskSizesMinutes"></option></template>
+                      </select></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Sizes are kept while KopiaLens runs. To count a folder again, use Count size in the Excluded tab.</p>
+                  </div>
+                </div>
+              </template>
+              <div x-kl-row x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="es_path">Everything (es.exe) path</span>
+                  <input autocomplete="off" x-model="esPath" @change="saveKl('es_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Everything is a free Windows file index by voidtools (voidtools.com). es.exe is its command-line tool; Everything itself must be running.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="excluded_tolerance">Excluded-folder tolerance</span>
+                  <select autocomplete="off" x-model.number="excludedTolerance" @change="saveKl('excluded_tolerance')" class="fld border border-bd bg-surface2">
+                    <option value="0">0% (strict)</option>
+                    <option value="0.02">2%</option>
+                    <option value="0.05">5%</option>
+                    <option value="0.1">10%</option>
+                    <option value="0.15">15%</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">In the Excluded tab a folder counts as backed up when less than this share of it is excluded. Cuts "partial" noise.</p>
+              </div>
+
+              <div x-kl-row class="pt-2 border-t border-bd-soft" data-testid="disk-places">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-xs font-medium">Other places to check</span>
+                  <button class="kl-btn" @click="diskPlaceAdd()" :disabled="diskPlaceForm !== null">Add a place</button>
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">Network shares and mounted folders, shown in the Excluded tab beside the drives. For another computer's files, say where its backups keep them.</p>
+                <div class="flex items-center justify-between gap-3 mt-3"><span x-kl-default="disk_show_local">Show this computer's drives</span>
+                  <button @click="diskShowLocal = !diskShowLocal; saveKl('disk_show_local'); excludedDrives = []" class="h-8 rounded border border-bd px-3" x-text="diskShowLocal ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Turn off on a server that only checks shared folders.</p>
+                <p class="text-[0.6875rem] text-muted mt-2" x-show="!diskPlaces.length && diskPlaceForm === null">No other places yet.</p>
+                <template x-for="(pl, i) in diskPlaces" :key="pl.path">
+                  <div class="flex items-center gap-2 mt-2 text-xs">
+                    <i class="ic ic-folder text-muted"></i>
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate font-mono" :title="pl.path" x-text="pl.path"></div>
+                      <div class="truncate text-muted" x-show="pl.backup_path" :title="pl.backup_path"
+                           x-text="'Backed up as ' + pl.backup_path + (pl.computer ? ' on ' + pl.computer : '')"></div>
+                    </div>
+                    <button class="kl-btn quiet" @click="diskPlaceEdit(i)" title="Edit">Edit</button>
+                    <button class="kl-btn quiet" @click="diskPlaceRemove(i)" :title="'Remove ' + pl.path">Remove</button>
+                  </div>
+                </template>
+                <template x-if="diskPlaceForm">
+                  <div class="mt-3 rounded border border-bd p-3 space-y-2 text-xs">
+                    <label class="flex flex-col gap-1">Folder on this computer
+                      <input autocomplete="off" x-model="diskPlaceForm.path" class="fld border border-bd bg-surface2 font-mono" placeholder="/mnt/pc-users or \\nas\share"></label>
+                    <label class="flex flex-col gap-1"><span>Backed up as <span class="text-muted">(optional: the same folder's path in the backups)</span></span>
+                      <input autocomplete="off" x-model="diskPlaceForm.backup_path" class="fld border border-bd bg-surface2 font-mono" placeholder="C:\Users"></label>
+                    <label class="flex flex-col gap-1"><span>On computer <span class="text-muted">(optional: only that computer's backups count)</span></span>
+                      <input autocomplete="off" x-model="diskPlaceForm.computer" class="fld border border-bd bg-surface2" list="disk-place-computers" placeholder="Any computer">
+                      <datalist id="disk-place-computers"><template x-for="c in diskPlaceComputers()" :key="c"><option :value="c"></option></template></datalist></label>
+                    <p x-show="diskPlaceForm.error" class="text-danger" x-text="diskPlaceForm.error"></p>
+                    <div class="flex gap-2 justify-end">
+                      <button class="kl-btn" @click="diskPlaceForm = null">Cancel</button>
+                      <button class="kl-btn primary" :disabled="!diskPlaceForm.path.trim()" @click="diskPlaceSave()">Save</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='advanced'" class="space-y-4">
+              <p class="text-[0.6875rem] text-muted">Sensible defaults; change them when you have a reason.</p>
+
+              <div class="pt-1 text-xs font-medium">Indexing</div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="duckdb_memory">Memory limit <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <select autocomplete="off" x-model="duckdbMemory" @change="saveKl('duckdb_memory')" class="fld border border-bd bg-surface2 w-40" data-testid="memory-limit">
+                    <option value="" x-text="memoryAuto ? 'Automatic (' + fmtLimit(memoryAuto) + ')' : 'Automatic'"></option>
+                    <template x-for="m in MEMORY_CHOICES" :key="m"><option :value="m" x-text="fmtLimit(m)" :selected="m === duckdbMemory"></option></template>
+                    <template x-if="duckdbMemory && !MEMORY_CHOICES.includes(duckdbMemory)"><option :value="duckdbMemory" x-text="fmtLimit(duckdbMemory)" selected></option></template>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">The most memory each repository's index can use, in the app and while indexing. Automatic is based on this PC's memory.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="duckdb_threads">Processor threads <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <select autocomplete="off" x-model.number="duckdbThreads" @change="saveKl('duckdb_threads')" class="fld border border-bd bg-surface2 w-40" data-testid="thread-limit">
+                    <option :value="0" x-text="threadsAuto ? 'Automatic (' + threadsAuto + ')' : 'Automatic'"></option>
+                    <template x-for="n in threadChoices()" :key="n"><option :value="n" x-text="n" :selected="n === duckdbThreads"></option></template>
+                    <template x-if="duckdbThreads && !threadChoices().includes(duckdbThreads)"><option :value="duckdbThreads" x-text="duckdbThreads" selected></option></template>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1"><span>How many processor threads each repository's index can use, in the app and while indexing.</span> <span x-show="threadsAuto" x-text="'Automatic: ' + threadsAuto + ' in the app, ' + threadsWorker + ' while indexing.'"></span> More threads are faster but need more memory.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_worker_timeout">Indexing time limit</span>
+                  {{ duration('indexWorkerTimeout', 'index_worker_timeout', 600) }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped. The next run continues where it left off.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_first_timeout">First index time limit</span>
+                  {{ duration('indexFirstTimeout', 'index_first_timeout', 600) }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">The same limit for a repository's first index, which reads every snapshot. Time the computer sleeps doesn't count.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_wait_unreachable">Give up on an unreachable repository after</span>
+                  {{ duration('indexWaitUnreachable', 'index_wait_unreachable', 60) }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">A drive unplugged or a cloud store offline mid-index. The run stops, keeps its progress, and the next repository can index.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_stall_timeout">Stop an index that makes no progress after</span>
+                  {{ duration('indexStallTimeout', 'index_stall_timeout') }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">Slow is fine; no progress at all for this long means stuck. 0 turns it off.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="reindex_after_delete_delay">Update the index after deletes</span>
+                  {{ duration('reindexAfterDeleteDelay', 'reindex_after_delete_delay') }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">How long after the last delete. Back-to-back deletes share one update.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="remove_plan_cap">Most files in one delete plan</span>
+                  <input autocomplete="off" type="number" min="1000" step="1000" x-model.number="removePlanCap" @change="saveKl('remove_plan_cap')" class="fld border border-bd bg-surface2 w-32" data-testid="remove-plan-cap"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">A bigger match is planned for its biggest files first.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_retry_delay">Retry after a failed run</span>
+                  {{ duration('indexRetryDelay', 'index_retry_delay', 60) }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">How long to wait before trying a failed indexing run again.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="index_max_retries">Retries per scheduled slot</span>
+                  <input autocomplete="off" type="number" min="0" max="5" x-model.number="indexMaxRetries" @change="saveKl('index_max_retries')" class="fld border border-bd bg-surface2 w-24"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">0 means a failed run waits for the next scheduled one.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="quit_indexing">When quitting KopiaLens</span>
+                  <select autocomplete="off" x-model="quitIndexing" @change="saveKl('quit_indexing')" class="fld border border-bd bg-surface2 w-40">
+                    <option value="finish">Let indexing finish</option>
+                    <option value="stop">Stop indexing</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Restart always lets indexing finish. A stopped run is tried again later.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="folder_prewarm_budget">Folder reclaimable space ahead of time</span>
+                  {{ duration('folderPrewarmBudget', 'folder_prewarm_budget') }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">Nightly time limit for working out folder sizes ahead of time, biggest folders first. Folders it doesn't reach are worked out when you open them. <strong>0 turns it off.</strong></p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="startup_delay">Quiet period after startup <span class="text-[0.625rem] text-warn">restart</span></span>
+                  {{ duration('startupDelay', 'startup_delay') }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">How long after launch before background work starts, so starting the PC isn't followed by a burst of disk and CPU.</p>
+              </div>
+
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="rank_count">Ranked files</span>
+                  <select autocomplete="off" x-model.number="rankCount" @change="saveKl('rank_count')" class="fld border border-bd bg-surface2">
+                    <option value="1000">1,000</option>
+                    <option value="5000">5,000</option>
+                    <option value="10000">10,000</option>
+                    <option value="25000">25,000</option>
+                    <option value="50000">50,000</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How many of the biggest files are ranked exactly each night, for Search's Stored and Reclaimable sorting. More takes a little longer.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="listing_backend">Listing backend <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <select autocomplete="off" x-model="backend" @change="saveKl('listing_backend')" class="fld border border-bd bg-surface2">
+                    <option value="subprocess">Run kopia when needed (default)</option>
+                    <option value="server">Keep a kopia server running</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How KopiaLens asks kopia for snapshot listings. The default only runs kopia when something needs it.</p>
+              </div>
+
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium">App</div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="debug_log">Debug log</span>
+                  <button @click="debugLog = !debugLog; saveKl('debug_log')" class="h-8 rounded border border-bd px-3" x-text="debugLog ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Writes detailed diagnostics to <code>data/logs/kopialens-debug.log</code>, alongside the normal app log. Useful when troubleshooting; leave it off otherwise. Applies immediately.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="experimental">Experimental features</span>
+                  <button @click="experimental = !experimental; saveKl('experimental')" class="h-8 rounded border border-bd px-3" x-text="experimental ? 'On' : 'Off'" data-testid="experimental-toggle"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Shows the Experimental section in Settings: features that are still being built and may change or go away.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="control_api">Local control port <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <button @click="controlApi = !controlApi; saveKl('control_api')" class="h-8 rounded border border-bd px-3" x-text="controlApi ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Lets scripts and AI tools on this computer check, restart or quit KopiaLens. Web pages can't use it. Off unless you use it.</p>
+              </div>
+              <div x-kl-row x-show="!(host && host.docker)" data-testid="port-settings">
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="port,control_port">Ports <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <span class="flex items-center gap-2">
+                    <label class="flex items-center gap-1 text-xs">App <input autocomplete="off" type="number" min="1024" max="65535" x-model.number="appPort" @change="saveKl('port')" class="fld border border-bd bg-surface2 w-24"></label>
+                    <label class="flex items-center gap-1 text-xs">Control <input autocomplete="off" type="number" min="1024" max="65535" x-model.number="controlPort" @change="saveKl('control_port')" class="fld border border-bd bg-surface2 w-24"></label>
+                  </span></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Change them if another program uses 7123 or 7124, or to run a second KopiaLens. They apply after you quit and reopen KopiaLens; a bookmark or reverse proxy then needs the new port.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="log_cleanup_days">Log cleanup</span>
+                  <select autocomplete="off" x-model.number="logCleanupDays" @change="saveKl('log_cleanup_days')" class="fld border border-bd bg-surface2">
+                    <option value="0">Keep everything</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">365 days</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Removes old job, dry-run and mount logs from <code>data/logs/jobs</code>. The newest 100 are always kept.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="task_history_days">Task history</span>
+                  <select autocomplete="off" x-model.number="taskHistoryKeep" @change="saveKl('task_history_days')" class="fld border border-bd bg-surface2" data-testid="task-history-days">
+                    <option value="0">Keep everything</option>
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">365 days</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How long finished backups and maintenance stay in the Tasks tab.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="task_routine_seconds">Routine tasks</span>
+                  <select autocomplete="off" x-model.number="taskRoutineSecs" @change="saveKl('task_routine_seconds')" class="fld border border-bd bg-surface2" data-testid="task-routine-seconds">
+                    <option value="0.5">Under 0.5 seconds</option>
+                    <option value="1">Under 1 second</option>
+                    <option value="2">Under 2 seconds</option>
+                    <option value="5">Under 5 seconds</option>
+                    <option value="10">Under 10 seconds</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">A task that finishes this fast without errors found nothing to back up. The Tasks tab can hide these.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="task_routine_hours">Keep routine tasks</span>
+                  <select autocomplete="off" x-model.number="taskRoutineHours" @change="saveKl('task_routine_hours')" class="fld border border-bd bg-surface2" data-testid="task-routine-hours">
+                    <option value="24">1 day</option>
+                    <option value="48">2 days</option>
+                    <option value="168">7 days</option>
+                  </select></div>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="engine_takeback">When another app stops running backups</span>
+                  <select autocomplete="off" x-model="engineTakeback" @change="saveKl('engine_takeback')" class="fld border border-bd bg-surface2" data-testid="engine-takeback">
+                    <option value="auto">KopiaLens takes over again</option>
+                    <option value="wait">Wait for me to resume</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">For repositories where you chose KopiaLens to run backups.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='experimental' && experimental" class="space-y-4" data-testid="settings-experimental">
+              <p class="text-[0.6875rem] text-muted">Features that are still being built. They may change or go away.</p>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="exp_notes">Notes</span>
+                  <button @click="expNotes = !expNotes; saveKl('exp_notes')" class="h-8 rounded border border-bd px-3" x-text="expNotes ? 'On' : 'Off'" data-testid="exp-notes-toggle"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Adds a Notes button to every page, for writing notes about what you see, with a screenshot. Notes are kept in KopiaLens's data folder on this computer.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='backblaze'" class="space-y-4">
+              <template x-if="raBz && !raBz.added">
+                <div class="kl-callout flex flex-wrap items-center gap-2" data-testid="bz-not-added">
+                  <span class="min-w-0 flex-1" x-text="raBz.found ? (raBz.this_computer === false ? 'Found Backblaze from ' + raBz.computer + '. Add it to see what it backs up.' : 'Backblaze is on this computer. Add it to see what it backs up.') : 'Backblaze wasn’t found on this computer. If it runs on another computer, share its data folder and enter it below.'"></span>
+                  <button x-show="raBz.found" @click="raAddBackblaze()" class="kl-btn primary">Add Backblaze</button>
+                </div>
+              </template>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="updates">Backblaze updates</span>
+                  <select autocomplete="off" x-model="bzUpdates" @change="saveKl('updates')" class="fld border border-bd bg-surface2" data-testid="bz-updates">
+                    <option value="auto">When Backblaze's file lists change</option>
+                    <option value="off">Off, only when I start it</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Separate from kopia indexing. Off keeps what KopiaLens already read.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="bzdata_path">Backblaze data folder</span>
+                  <input autocomplete="off" x-model="bzDataPath" @change="saveKl('bzdata_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" :placeholder="(raBz && raBz.default) || 'Path to Backblaze’s bzdata folder'"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Where the Backblaze client keeps its file lists. Empty finds it automatically. Another computer's shared folder works too. Read-only - KopiaLens never writes here.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="computer">Backblaze data is from</span>
+                  <select autocomplete="off" x-model="bzComputer" @change="saveKl('computer')" class="fld border border-bd bg-surface2" data-testid="bz-computer-setting">
+                    <option value="auto">Detect automatically</option>
+                    <option value="this">This computer</option>
+                    <option value="other">Another computer</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Another computer turns off the comparison with this computer's Kopia backups.<span x-show="raBz && raBz.computer" x-text="' Backblaze calls it ' + (raBz && raBz.computer) + '.'"></span></p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="store">File index format</span>
+                  <select autocomplete="off" x-model="bzStore" @change="saveKl('store')" class="fld border border-bd bg-surface2">
+                    <option value="parquet">Parquet (default)</option>
+                    <option value="sqlite">SQLite (older)</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Parquet: smaller and faster. SQLite: the older format. Switching rebuilds it at the next Backblaze rescan.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="bz_reindex_min_gap">Reindex minimum gap</span>
+                  <select autocomplete="off" x-model.number="bzReindexMinGap" @change="saveKl('bz_reindex_min_gap')" class="fld border border-bd bg-surface2" data-testid="bz-min-gap">
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
+                    <option value="10800">3 hours</option>
+                    <option value="14400">4 hours</option>
+                    <option value="21600">6 hours</option>
+                    <option value="28800">8 hours</option>
+                    <option value="36000">10 hours</option>
+                    <option value="43200">12 hours</option>
+                    <option value="86400">24 hours</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How long to wait after Backblaze's own scan changes before reindexing. Shorter means fresher numbers and more work.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="history_days">History retention</span>
+                  <div class="flex items-center gap-2">
+                    <input autocomplete="off" type="number" min="7" step="1" x-model.number="bzHistoryDays" @change="saveKl('history_days')" class="fld border border-bd bg-surface2 w-24">
+                    <span class="text-[0.6875rem] text-muted">days</span>
+                  </div></div>
+                <p class="text-[0.6875rem] text-muted mt-1">How many days of per-folder rollups to keep for the growth and churn trend.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="collapse_prefixes">Collapse prefixes <span class="text-[0.625rem] text-muted">(advanced)</span></span>
+                  <input autocomplete="off" x-model="bzCollapsePrefixes" @change="saveKl('collapse_prefixes')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Kopia, E:\Backups\Kopia"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Comma-separated paths that show as one row in the Queue, Churn and by-folder views instead of splitting into their chunk-named subfolders.</p>
+              </div>
+            </section>
+
+            <div x-show="!settingsSearching && klPageChanged().length" class="mt-6 pt-3 border-t border-bd-soft flex justify-end" data-testid="settings-reset-page">
+              <button class="kl-btn" @click="klResetPage()">Reset this page</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0 border-t border-bd px-4 py-3">
+          <div class="text-[0.6875rem] text-muted">Changes save as you make them. Items marked <span class="text-warn">restart</span> need a restart.</div>
+          <button x-show="host.restart" @click="appRestart()" class="ml-auto h-8 rounded border border-bd px-3" data-testid="app-restart">Restart…</button>
+          <button @click="showSettings=false" class="h-8 rounded border border-bd px-3" :class="host.restart ? '' : 'ml-auto'">Close</button>
+        </div>
+
+      </div>
+    </div>

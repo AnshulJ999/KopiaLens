@@ -1,0 +1,148 @@
+      <section x-show="active==='logs'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-medium">Logs</span>
+          <span class="kl-seg">
+            <span :class="logsTab === 'audit' ? 'on' : ''" @click="setLogsTab('audit')">Audit</span>
+            <span :class="logsTab === 'activity' ? 'on' : ''" @click="setLogsTab('activity')">Activity</span>
+            <span :class="logsTab === 'indexing' ? 'on' : ''" @click="setLogsTab('indexing')">Indexing</span>
+            <span :class="logsTab === 'app' ? 'on' : ''" @click="setLogsTab('app')">App log</span>
+            <span :class="logsTab === 'notices' ? 'on' : ''" @click="setLogsTab('notices')">Notices</span>
+          </span>
+          <select autocomplete="off" x-model="logsRepo" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto" x-show="logsTab !== 'app' && logsTab !== 'notices'">
+            <option value="all">All repos</option>
+            <template x-for="r in repos" :key="r.id"><option :value="r.id" :selected="r.id == logsRepo" x-text="r.name"></option></template>
+          </select>
+          <span class="kl-chips" x-show="logsTab === 'audit' && auditChips" data-testid="audit-chips">
+            <template x-for="g in auditGroupList()" :key="g[0]">
+              <button type="button" class="kl-chip" :class="auditGroups.includes(g[0]) ? 'on' : ''" :title="g[2]" @click="toggleAuditGroup(g[0])"
+                      x-text="g[1] + ' ' + (auditCounts[g[0]] ?? '')" :data-testid="'audit-chip-' + g[0]"></button>
+            </template>
+          </span>
+          <label class="flex items-center gap-1.5 text-xs" x-show="logsTab === 'audit' && !auditChips" title="Hides snapshots you started, previews and checks">
+            <input autocomplete="off" type="checkbox" x-model="auditHideRoutine" @change="klSet({ audit_hide_routine: auditHideRoutine }); loadAudit()" data-testid="audit-hide-routine">Hide routine</label>
+          <template x-if="logsTab === 'app'">
+            <span class="flex items-center gap-2">
+              <select autocomplete="off" x-model="appLogLevel" @change="loadAppLog()" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto">
+                <option value="debug" :selected="appLogLevel === 'debug'">Everything</option>
+                <option value="info" :selected="appLogLevel === 'info'">Info and above</option>
+                <option value="warning" :selected="appLogLevel === 'warning'">Warnings and errors</option>
+                <option value="error" :selected="appLogLevel === 'error'">Errors only</option>
+              </select>
+              <select autocomplete="off" x-model="appLogFile" @change="loadAppLog()" x-show="appLogDebugAvailable || appLogFile === 'debug'" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto">
+                <option value="app" :selected="appLogFile === 'app'">App log</option>
+                <option value="debug" :selected="appLogFile === 'debug'">Debug log</option>
+              </select>
+            </span>
+          </template>
+          <span class="ml-auto"><span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('logs')" @keydown.enter.prevent="openDocs('logs')" title="What KopiaLens did: changes it made, jobs, index runs and its own log.">?</span></span>
+          <button @click="loadLogs()" class="h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
+        </div>
+        <span class="kl-note -mt-1" x-show="logsTab === 'audit'">Every action KopiaLens executes or hands out, across all repos. Never trimmed.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'activity'">Past jobs - deletes, restores, dry runs. Kept on disk, so history survives a restart.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'indexing'">Every index run: how long each stage took, what failed or was skipped. Written by the app, so timed-out and killed runs appear too.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'notices'">Messages this window showed, newest first. Cleared when the page reloads.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'app'">What the app did and what went wrong, newest first. The debug log (Settings, Advanced) adds detailed diagnostics.</span>
+
+        <!-- AUDIT -->
+        <div x-show="logsTab === 'audit'" class="rounded border border-bd bg-surface p-3">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
+            <table class="w-full text-[0.6875rem]">
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">By</th></tr></thead>
+              <tbody>
+                <template x-for="(r, i) in logsAudit()" :key="i">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts)"></td>
+                    <td class="p-1.5" :class="auditFailed(r) ? 'text-danger font-medium' : ''" :title="r.rc ? 'Exit code ' + r.rc : ''" x-text="auditEvent(r)"></td>
+                    <td class="p-1.5" x-text="auditAction(r)" :title="r.action"></td>
+                    <td class="p-1.5" x-text="r.repo ? repoLabel(r.repo) : ''"></td>
+                    <td class="p-1.5 break-all max-w-[36rem]" x-text="auditSummary(r)" :title="auditRaw(r)"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="auditActor(r)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!logsAudit().length" class="p-3 text-xs text-muted">Nothing recorded yet - every executed or generated command will appear here.</div>
+          </div>
+        </div>
+
+        <!-- ACTIVITY -->
+        <div x-show="logsTab === 'activity'" class="rounded border border-bd bg-surface p-3">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
+            <table class="w-full text-[0.6875rem]">
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Started</th><th class="p-1.5">Kind</th><th class="p-1.5">Repo</th><th class="p-1.5">What</th><th class="p-1.5">State</th><th class="p-1.5">Progress</th><th class="p-1.5">Took</th></tr></thead>
+              <tbody>
+                <template x-for="(j, i) in logsJobs()" :key="j.job_id || i">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(j.started || j.created)"></td>
+                    <td class="p-1.5" x-text="(j.kind_label || j.kind || '') + (j.dry ? ' (dry run)' : '')"></td>
+                    <td class="p-1.5" x-text="j.repo ? repoLabel(j.repo) : ''"></td>
+                    <td class="p-1.5 break-all max-w-[24rem]" x-text="j.label || ''"></td>
+                    <td class="p-1.5 font-medium" :class="jobStateClass(j)" :title="j.error || ''" x-text="jobStateText(j)"></td>
+                    <td class="p-1.5" x-text="j.total ? j.done + '/' + j.total : ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="j.elapsed != null ? fmtDur(j.elapsed) : ''"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!logsJobs().length" class="p-3 text-xs text-muted">No jobs yet - every dry run or executed action from the run bar will appear here.</div>
+          </div>
+        </div>
+
+        <!-- INDEXING -->
+        <div x-show="logsTab === 'indexing'" class="rounded border border-bd bg-surface p-3">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
+            <table class="w-full text-[0.6875rem]">
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Finished</th><th class="p-1.5">Repo</th><th class="p-1.5">Trigger</th><th class="p-1.5">Result</th><th class="p-1.5">Took</th><th class="p-1.5">Stages</th><th class="p-1.5">Detail</th></tr></thead>
+              <tbody>
+                <template x-for="(r, i) in logsRuns()" :key="i">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts_epoch || r.ts)"></td>
+                    <td class="p-1.5" x-text="r.repo ? repoLabel(r.repo) : ''"></td>
+                    <td class="p-1.5" x-text="r.trigger || ''"></td>
+                    <td class="p-1.5 font-medium" :class="r.ok ? 'text-ok' : 'text-danger'" x-text="r.ok ? 'ok' : 'failed'"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="fmtDur(r.elapsed || 0)"></td>
+                    <td class="p-1.5 break-all max-w-[30rem]" x-text="runStageText(r)"></td>
+                    <td class="p-1.5 break-all max-w-[24rem]" :class="r.ok ? 'text-warn' : 'text-danger'" x-text="runErrorText(r)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!logsRuns().length" class="p-3 text-xs text-muted">No runs recorded yet - the history starts with the next index run (or the next app restart for older runs' gaps).</div>
+          </div>
+        </div>
+
+        <!-- NOTICES: the messages this window showed (toasts and action results), newest first -->
+        <div x-show="logsTab === 'notices'" class="rounded border border-bd bg-surface p-3" data-testid="logs-notices">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
+            <table class="w-full text-[0.6875rem]">
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Time</th><th class="p-1.5">Message</th></tr></thead>
+              <tbody>
+                <template x-for="(n, i) in noticeLog" :key="n.ts + '-' + i">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(n.ts)"></td>
+                    <td class="p-1.5 whitespace-pre-wrap break-all" :class="n.kind === 'error' ? 'text-danger' : (n.kind === 'warn' ? 'text-warn' : '')" x-text="n.msg"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!noticeLog.length" class="p-3 text-xs text-muted">No messages yet in this window.</div>
+          </div>
+        </div>
+
+        <!-- APP LOG -->
+        <div x-show="logsTab === 'app'" class="rounded border border-bd bg-surface p-3">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft bg-surface2 font-mono text-[0.6875rem]">
+            <template x-for="(rec, i) in appLogRecords" :key="i">
+              <div class="flex gap-2 px-2 py-0.5 border-b border-bd-soft">
+                <span class="shrink-0 whitespace-nowrap text-muted" style="width:9.5rem" x-text="logStamp(rec.ts)"></span>
+                <span class="shrink-0 font-medium" style="width:4.5rem" :class="logLevelClass(rec)" x-text="rec.level"></span>
+                <span class="shrink-0 text-muted" style="width:9rem" x-text="rec.logger.replace(/^kopialens\./, '')"></span>
+                <span class="whitespace-pre-wrap break-all grow" :class="logLevelClass(rec) === 'text-danger' ? 'text-danger' : ''" x-text="rec.message"></span>
+              </div>
+            </template>
+            <div x-show="appLogLoaded && !appLogRecords.length" class="p-3 text-xs text-muted">Nothing at this level in the current log file.</div>
+            <div x-show="!appLogLoaded" class="p-3 text-xs text-muted">Loading…</div>
+          </div>
+          <div class="kl-note mt-1" x-show="appLogTruncated">Showing the newest part of the current log file - older rotations stay on disk under data/logs.</div>
+        </div>
+      </section>

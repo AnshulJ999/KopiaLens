@@ -1,0 +1,158 @@
+{% from "partials/_macros.html" import task_counters %}
+
+    <!-- New snapshot of any folder (sourceops.js) -->
+    <template x-if="newSnap">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="closeNewSnap()" data-testid="newsnap-dialog">
+        <div class="w-[40rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm" role="dialog" aria-label="New snapshot">
+          <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+            <div class="font-medium">New snapshot</div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('new-snapshot')" @keydown.enter.prevent="openDocs('new-snapshot')" title="Back up any folder now">?</span>
+            <button @click="closeNewSnap()" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
+            <label class="flex flex-col gap-1 text-xs font-medium">Folder or file to back up
+              <span class="flex gap-2">
+                <input autocomplete="off" x-model="newSnap.path" @change="newSnapCheck()" @keydown.enter.prevent="newSnapCheck()" list="newsnap-paths"
+                       class="fld grow border border-bd bg-surface2 font-mono" :placeholder="host && host.os === 'windows' ? 'D:\\Photos' : '/home/me/photos'" data-testid="newsnap-path">
+                <button type="button" class="kl-btn" @click="newSnapBrowse()">Browse…</button>
+              </span>
+              <datalist id="newsnap-paths"><template x-for="p in newSnapPaths()" :key="p"><option :value="p"></option></template></datalist>
+            </label>
+            <div x-show="newSnap.checking" class="kl-note">Checking…</div>
+            <p x-show="newSnap.error" class="text-xs text-danger" x-text="newSnap.error"></p>
+            <template x-if="newSnap.check">
+              <div class="space-y-3">
+                <div class="kl-facts">
+                  <div class="r"><span class="k">Source</span><span class="break-all font-mono" x-text="newSnap.check.source"></span></div>
+                  <div class="r"><span class="k">Snapshots so far</span><span x-text="newSnap.check.snapshots ? countOf(newSnap.check.snapshots, 'snapshot') : 'None, this is the first'"></span></div>
+                  <template x-for="row in newSnapPolicyRows(newSnap.check.policy)" :key="row[0]">
+                    <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
+                  </template>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button class="kl-btn" @click="newSnapEditPolicy()" x-text="newSnap.check.policy.own ? 'Edit its policy…' : 'Give it its own policy…'"></button>
+                  <button class="kl-btn" @click="newSnapEstimate()" :disabled="newSnap.est && newSnap.est.state === 'running'" data-testid="newsnap-estimate"
+                          x-text="newSnap.est && newSnap.est.state === 'running' ? 'Estimating…' : 'Estimate size'"></button>
+                  <button class="kl-btn quiet" x-show="newSnap.est && newSnap.est.state === 'running'" @click="newSnapStopEstimate()">Stop</button>
+                </div>
+                <template x-if="newSnap.est">
+                  <div class="space-y-1.5">
+                    <div class="text-xs text-muted truncate" x-show="newSnap.est.state === 'running' && newSnap.est.progress" x-text="newSnap.est.progress" data-testid="newsnap-est-progress"></div>
+                    <template x-if="taskCounters(newSnap.est).length">
+                      <div class="max-h-48 overflow-auto">{{ task_counters('newSnap.est') }}</div>
+                    </template>
+                    <template x-for="l in newSnap.est.summary" :key="l"><div class="text-xs" x-text="l"></div></template>
+                    <div class="text-xs text-danger" x-show="newSnap.est.state === 'failed'">The estimate didn't finish.</div>
+                    <details class="text-xs">
+                      <summary class="cursor-pointer text-muted">Details</summary>
+                      <pre class="kl-term mt-1 max-h-48 overflow-auto" x-text="newSnap.est.lines.join('\n')"></pre>
+                    </details>
+                  </div>
+                </template>
+                <label class="flex flex-col gap-1 text-xs font-medium">Description (optional)
+                  <input autocomplete="off" x-model="newSnap.description" class="fld border border-bd bg-surface2" placeholder="e.g. before the upgrade"></label>
+              </div>
+            </template>
+          </div>
+          <div class="kl-footer">
+            <span class="kl-note" x-show="newSnap.check && engineRuns()">Later backups follow the policy's schedule.</span>
+            <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('non_destructive')" x-text="wmWhy('non_destructive')"></span>
+            <button type="button" @click="closeNewSnap()" class="kl-btn">Cancel</button>
+            <button type="button" class="kl-btn primary" :disabled="!newSnap.check || newSnap.busy || !!wmOff('non_destructive')" @click="newSnapStart()" data-testid="newsnap-start">Snapshot now</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Delete a whole source -->
+    <template x-if="srcDel">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="srcDel = null" data-testid="srcdel-dialog">
+        <div class="w-[34rem] max-w-full flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm" role="dialog" aria-label="Delete source">
+          <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+            <div class="font-medium min-w-0 truncate" x-text="'Delete ' + shortSource(srcDel.source) + '?'"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-snapshots', 'delete-a-source')" @keydown.enter.prevent="openDocs('delete-snapshots', 'delete-a-source')" title="Deleting every snapshot of a folder">?</span>
+            <button @click="srcDel = null" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
+          </div>
+          <div class="p-4 space-y-3">
+            <p x-show="srcDel.error" class="text-xs text-danger" x-text="srcDel.error"></p>
+            <div x-show="!srcDel.info && !srcDel.error" class="kl-note">Reading the source…</div>
+            <template x-if="srcDel.info">
+              <div class="space-y-3">
+                <div class="kl-facts">
+                  <div class="r"><span class="k">Source</span><span class="break-all font-mono" x-text="srcDel.source"></span></div>
+                  <div class="r"><span class="k">Snapshots</span><span x-text="srcDel.info.snapshots"></span></div>
+                  <div class="r" x-show="srcDel.info.pinned"><span class="k">Pinned</span><span class="text-warn" x-text="srcDel.info.pinned + ' (deleted too)'"></span></div>
+                </div>
+                <label class="flex items-center gap-2 text-xs" x-show="srcDel.info.has_policy">
+                  <input autocomplete="off" type="checkbox" x-model="srcDel.policy"> Also delete this source's policy</label>
+              </div>
+            </template>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
+            <button type="button" @click="srcDel = null" class="kl-btn">Cancel</button>
+            <button type="button" class="kl-btn" :disabled="!srcDel.info" @click="srcDelDry()">Dry run</button>
+            <button type="button" class="kl-btn danger" :disabled="!srcDel.info || srcDel.busy || !!wmOff('full')" @click="srcDelRun()"
+                    x-text="srcDel.info ? 'Delete ' + countOf(srcDel.info.snapshots, 'snapshot') + '…' : 'Delete…'"></button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Show command -->
+    <template x-if="cliBox">
+      <div class="fixed inset-0 z-[47] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="cliBox = null" data-testid="cli-box">
+        <div class="w-[44rem] max-w-full flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm" role="dialog" aria-label="Command line">
+          <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+            <div class="font-medium">Command line</div>
+            <button @click="cliBox = null" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
+          </div>
+          <div class="p-4"><pre class="kl-term whitespace-pre-wrap break-all" x-text="cliBox.commands.join('\n')"></pre></div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button type="button" @click="cliBox = null" class="kl-btn">Close</button>
+            <button type="button" class="kl-btn primary" @click="copyText(cliBox.commands.join('\n')); cliBox = null">Copy</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Verify backups -->
+    <template x-if="verifyDlg">
+      <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="verifyDlg = null" data-testid="verify-dialog">
+        <div class="w-[34rem] max-w-full flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm" role="dialog" aria-label="Verify backups">
+          <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
+            <div class="font-medium">Verify backups</div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('backups', 'checking-backups')" @keydown.enter.prevent="openDocs('backups', 'checking-backups')" title="What a verify checks">?</span>
+            <button @click="verifyDlg = null" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
+          </div>
+          <div class="p-4 space-y-3">
+            <p class="text-xs text-muted">Checks that every snapshot's folders and file records can be read back from the repository.</p>
+            <div class="flex items-center gap-3 text-xs">
+              <label class="flex items-center gap-1.5"><input autocomplete="off" type="radio" value="all" x-model="verifyDlg.scope"> Every source</label>
+              <label class="flex items-center gap-1.5"><input autocomplete="off" type="radio" value="one" x-model="verifyDlg.scope"> One source</label>
+            </div>
+            <select autocomplete="off" x-show="verifyDlg.scope === 'one'" x-model="verifyDlg.source" class="fld border border-bd bg-surface2 w-full text-xs" aria-label="Source">
+              <option value="">Pick a source</option>
+              <template x-for="s in sources" :key="s"><option :value="s" :selected="s == verifyDlg.source" x-text="s"></option></template>
+            </select>
+            <label class="flex items-center justify-between gap-3 text-xs">Also download and check files
+              <select autocomplete="off" x-model.number="verifyDlg.percent" class="fld border border-bd bg-surface2">
+                <option value="0">None</option>
+                <option value="1">1% of files</option>
+                <option value="5">5% of files</option>
+                <option value="10">10% of files</option>
+                <option value="100">Every file</option>
+              </select></label>
+            <p class="kl-callout" x-show="verifyBig()">On a repository this size, this can take hours.</p>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button type="button" @click="verifyDlg = null" class="kl-btn">Cancel</button>
+            <button type="button" class="kl-btn primary" :disabled="verifyDlg.scope === 'one' && !verifyDlg.source" @click="verifyStart()">Verify…</button>
+          </div>
+        </div>
+      </div>
+    </template>

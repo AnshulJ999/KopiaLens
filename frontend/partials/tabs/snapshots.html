@@ -1,0 +1,35 @@
+      <section x-show="active==='snapshots'" class="h-full flex flex-col gap-2">
+        <div class="kl-toolbar">
+          <select autocomplete="off" x-show="showOwnerFilter()" x-cloak @change="setOwnerFilter($event.target.value)" class="fld border border-bd bg-surface max-w-[16rem]" title="Whose backups to show" data-testid="owner-filter">
+            <option value="all" :selected="ownerFilter() === 'all'">All computers</option>
+            <option value="me" :selected="ownerFilter() === 'me'" x-text="myOwner() ? 'This computer (' + myOwner() + ')' : 'This computer'"></option>
+            <template x-for="o in otherOwners()" :key="o"><option :value="o" :selected="ownerFilter() === o" x-text="o"></option></template>
+          </select>
+          <select autocomplete="off" x-model="snapSource" @change="changeSnapSource()" class="fld border border-bd bg-surface max-w-[22rem]" title="Source">
+            <option value="*ALL*">All sources</option>
+            <template x-for="s in sources.filter((x) => ownerMatch(x))" :key="s"><option :value="s" :selected="s == snapSource" x-text="shortSource(s)"></option></template>
+          </select>
+          <button x-show="repoKind !== 'server'" @click="snapSource === '*ALL*' ? analyzeAll() : analyzeSnapshots()" :disabled="analyzing || analyzingAll" class="kl-btn"
+                  :title="snapSource === '*ALL*' ? 'Work out churn and reclaimable space for every source' : 'Work out churn and reclaimable space for this source'"
+                  x-text="(analyzing || analyzingAll) ? 'Analyzing…' : 'Analyze'"></button>
+          <button x-show="repoKind !== 'server'" @click="openSimulateFromSnapshots()" class="kl-btn" title="Try a retention policy and see what it would keep and free">Simulate retention…</button>
+          <span x-show="snapStaleAnalysis" class="pill warn" title="Churn and reclaimable numbers are from the previous index run. Analyze updates them.">Numbers from the last run</span>
+          <span class="grow"></span>
+          <button x-show="repoKind !== 'server'" @click="planDelete()" :disabled="!snapSelCount" class="kl-btn dangerline"
+                  x-text="snapSelCount > 1 ? 'Delete ' + snapSelCount + ' snapshots…' : 'Delete snapshot…'" title="Delete the selected snapshots"></button>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('snapshots')" @keydown.enter.prevent="openDocs('snapshots')"
+                :title="repoKind === 'server' ? 'Double-click a snapshot to browse its folders.' : 'Churn is the new data a snapshot added. Reclaimable is the space deleting it gives back. With all sources, the list is sorted by reclaimable space: Analyze fills it in. Select rows, then right-click for more.'">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; csv('#snapshotsTable', fileName('snapshots', snapSource && snapSource !== '*ALL*' ? sourcePath(snapSource) : ''))">Export CSV</button>
+              <button @click="open = false; openTableLayout('#snapshotsTable')">Table layout…</button>
+              <button x-show="repoKind === 'kopia'" @click="open = false; showCli('snapshots', snapSource)">Show command</button>
+              <template x-if="repoKind !== 'server' && snapSource !== '*ALL*'">
+                <button @click="open = false; analyzeAll()">Analyze every source</button>
+              </template>
+            </div>
+          </span>
+        </div>
+        <div id="snapshotsTable" class="flex-1 min-h-0"></div>
+      </section>

@@ -1,0 +1,153 @@
+{# Shared Jinja macros for the partials. Imported, not included - a macro emits only when called. #}
+
+{#- Selection bar for a multi-select table: `scope` is 'search' or 'tree', `count` the state
+    field holding how many rows are selected. Shown only while something is selected. -#}
+{% macro selbar(scope, count) -%}
+<span class="kl-selbar" x-show="{{ count }} > 0" x-cloak data-testid="{{ scope }}-selbar">
+  <b x-text="{{ count }} + ' selected'"></b>
+  <button class="kl-btn quiet" @click="openSelection('{{ scope }}')">Details</button>
+  <button class="kl-btn quiet" @click="selRestore('{{ scope }}')">Restore…</button>
+  <button class="kl-btn quiet" @click="selExclude('{{ scope }}')">Exclude…</button>
+  <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+    <button class="kl-btn dangerline" @click="open = !open" :aria-expanded="open">Delete<i class="ic ic-caret-down"></i></button>
+    <div class="kl-menu" x-show="open" x-cloak>
+      <button class="dg" @click="open = false; selDelete('{{ scope }}')">Delete from backups… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+      <button class="dg" @click="open = false; selExclude('{{ scope }}', 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
+    </div>
+  </span>
+  <button class="kl-btn quiet" @click="clearSelection('{{ scope }}')" title="Clear the selection (Esc)">Clear</button>
+</span>
+{%- endmacro %}
+
+{#- The run bar's results area (dry run / preview output). `st` is the state expression,
+    e.g. 'detail.rfDry' - the object carries {running, done, ok, output, truncated, log,
+    elapsed, snapshots, final_line, mode, error} and is initialised with its owner. -#}
+{#- A policy's rule list before and after a change. `d` evaluates to {label, before, after}. -#}
+{% macro rulediff(d) -%}
+<div class="rounded border border-bd bg-surface2 p-2">
+  <div class="flex items-center gap-2 mb-1">
+    <span class="text-xs font-medium break-all" x-text="{{ d }}.label"></span>
+    <span class="count text-[0.6875rem]" style="color:var(--muted)" x-text="diffCounts({{ d }}.before, {{ d }}.after)"></span>
+    <span class="grow"></span>
+    <span class="kl-seg" style="height:22px">
+      <span :class="diffMode !== 'full' ? 'on' : ''" @click="diffSetMode('changes')" title="Added and removed rules">Changes only</span>
+      <span :class="diffMode === 'full' ? 'on' : ''" @click="diffSetMode('full')" title="The whole list, in kopia's order">Full list</span>
+    </span>
+  </div>
+  <div class="kl-list font-mono text-[0.71875rem]" style="max-height:180px">
+    <template x-for="(r, i) in diffRows({{ d }}.before, {{ d }}.after, diffMode)" :key="i">
+      <div class="li" :style="r.kind === 'add' ? 'color:var(--ok)' : r.kind === 'remove' ? 'color:var(--danger);text-decoration:line-through' : r.kind === 'moved' ? 'color:var(--warn)' : ''">
+        <span class="shrink-0 text-right" style="width:2.2rem;color:var(--faint)" x-text="r.n || ''"></span>
+        <span class="shrink-0" style="width:1rem" x-text="diffMark(r.kind)" :title="r.kind === 'moved' ? 'Moved - order matters with ! rules' : ''"></span>
+        <span class="break-all grow" x-text="r.rule"></span>
+      </div>
+    </template>
+    <div class="li" style="color:var(--muted)" x-show="!diffRows({{ d }}.before, {{ d }}.after, diffMode).length">No changes</div>
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro dryresult(st) -%}
+<div class="kl-sec" x-show="{{ st }} && ({{ st }}.running || {{ st }}.done || {{ st }}.error)">
+  <div class="h">
+    <span x-text="{{ st }}.running ? 'Running…' : 'Result'"></span>
+    <span class="count" x-show="{{ st }}.done && {{ st }}.elapsed"
+          x-text="({{ st }}.snapshots != null ? countOf({{ st }}.snapshots, 'snapshot') + ' · ' : '') + {{ st }}.elapsed + 's'"></span>
+    <span class="acts" x-show="{{ st }}.running && {{ st }}.jobId">
+      <button type="button" class="kl-btn danger" style="height:22px" @click="klDryStop({{ st }})" :disabled="{{ st }}.stopping === true"
+              x-text="{{ st }}.stopping ? 'Stopping…' : 'Stop'"></button>
+    </span>
+    <span class="acts" x-show="{{ st }}.done">
+      <span class="kl-seg">
+        <span :class="{{ st }}.mode==='clean' ? 'on' : ''" @click="{{ st }}.mode='clean'">Clean</span>
+        <span :class="{{ st }}.mode==='raw' ? 'on' : ''" @click="{{ st }}.mode='raw'">Raw</span>
+      </span>
+    </span>
+  </div>
+  <div class="kl-term" style="max-height:132px">
+    <template x-for="(ln, i) in klDryLines({{ st }})" :key="i"><div class="break-all" x-text="ln"></div></template>
+    <div x-show="{{ st }} && !({{ st }}.lines && {{ st }}.lines.length) && {{ st }}.running" class="t">waiting for kopia…</div>
+  </div>
+  <div class="kl-note" x-show="{{ st }}.done" x-text="klDrySummary({{ st }})"></div>
+  <div class="kl-note" x-show="{{ st }}.truncated || klDryCut({{ st }}) > 0">
+    Not every line is shown<span x-show="{{ st }}.log"> - the full text is in <span class="font-mono break-all" x-text="{{ st }}.log"></span></span>.
+  </div>
+  <div class="kl-note" x-show="{{ st }}.error" x-text="{{ st }}.error"></div>
+</div>
+{%- endmacro %}
+
+{#- Exclude & delete: where this step sits in the flow (1 Exclude, 2 Delete, 3 Review). -#}
+{% macro flowsteps(n) -%}
+<div class="kl-steps" aria-label="Step {{ n }} of 3">
+  <span class="{{ 'on' if n == 1 else 'done' }}">1 Exclude</span><span class="sep">›</span>
+  <span class="{{ 'on' if n == 2 else ('done' if n > 2 else '') }}">2 Delete</span><span class="sep">›</span>
+  <span class="{{ 'on' if n == 3 else '' }}">3 Review</span>
+</div>
+{%- endmacro %}
+
+{#- A daily time: three common times plus Custom, which shows a typed time box. `model` is the bound
+    property, `change` runs after a pick (e.g. a save), `disabled` an expression. -#}
+{% macro time_chips(model, change='', disabled='false') -%}
+<div class="flex flex-wrap items-center gap-1.5" x-data="{ custom: false }" data-testid="time-chips">
+  <template x-for="c in timeChips()" :key="c[0]">
+    <button type="button" class="kl-chip" :class="!custom && {{ model }} === c[0] ? 'on' : ''" :disabled="{{ disabled }}"
+            @click="custom = false; {{ model }} = c[0]; {{ change }}" x-text="c[1] + ', ' + c[0]"></button>
+  </template>
+  <button type="button" class="kl-chip" :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" :disabled="{{ disabled }}" @click="custom = true">Custom…</button>
+  <input autocomplete="off" x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}" :disabled="{{ disabled }}"
+         class="fld border border-bd bg-surface2 disabled:opacity-50" aria-label="Time">
+</div>
+{%- endmacro %}
+
+{#- The same daily time choices as a segmented control at field height, for a Settings row.
+    Times only; the names show on hover. -#}
+{% macro time_seg(model, change='') -%}
+<div class="flex items-center gap-2" x-data="{ custom: false }" data-testid="time-seg">
+  <span class="kl-seg lg" role="radiogroup" aria-label="Time">
+    <template x-for="c in timeChips()" :key="c[0]">
+      <button type="button" role="radio" :aria-checked="!custom && {{ model }} === c[0]" :class="!custom && {{ model }} === c[0] ? 'on' : ''" :title="c[1]"
+              @click="custom = false; {{ model }} = c[0]; {{ change }}" x-text="c[0]"></button>
+    </template>
+    <button type="button" role="radio" :aria-checked="custom || !timeChips().some((c) => c[0] === {{ model }})"
+            :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" @click="custom = true">Custom…</button>
+  </span>
+  <input autocomplete="off" x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}"
+         class="fld border border-bd bg-surface2" aria-label="Custom time">
+</div>
+{%- endmacro %}
+
+{#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
+{% macro duration(prop, key, min=0) -%}
+<div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">
+  <input autocomplete="off" type="number" :min="{{ min }} / Number(unit)" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
+  <select autocomplete="off" x-model="unit" @change="relabel()" class="fld border border-bd bg-surface2" aria-label="Unit">
+    <option value="1">seconds</option>
+    <option value="60">minutes</option>
+    <option value="3600">hours</option>
+  </select>
+</div>
+{%- endmacro %}
+
+{#- Top of a kopia-only Settings section while no kopia repository is set up (only Backblaze). -#}
+{% macro needs_kopia() -%}
+<div x-show="!hasKopiaRepo()" class="kl-callout flex flex-wrap items-center gap-2" data-testid="needs-kopia">
+  <span class="min-w-0 flex-1">Connect a kopia repository to use this.</span>
+  <button type="button" @click="showSettings=false; openAddRepo()" class="kl-btn">Add repository…</button>
+</div>
+{%- endmacro %}
+
+{#- A task's Counter / Value table (Tasks popup and the job panel): kopia's counters, errors and warnings
+    coloured, like KopiaUI's task page. `t` is a task (Tasks) or a job (job panel). -#}
+{% macro task_counters(t) -%}
+<table class="w-full text-[0.6875rem]" data-testid="task-counters">
+  <thead><tr class="text-muted text-left"><th class="px-2 py-1 font-medium">Counter</th><th class="px-2 py-1 font-medium text-right">Value</th></tr></thead>
+  <tbody>
+    <template x-for="c in taskCounters({{ t }})" :key="c.name">
+      <tr class="border-t border-bd-soft">
+        <td class="px-2 py-1" :class="c.zero ? 'text-faint' : c.level === 'error' ? 'text-danger font-medium' : c.level === 'warning' ? 'text-warn font-medium' : ''" x-text="c.name"></td>
+        <td class="px-2 py-1 text-right num" :class="c.zero ? 'text-faint' : c.level === 'error' ? 'text-danger font-medium' : c.level === 'warning' ? 'text-warn font-medium' : ''" x-text="c.value"></td>
+      </tr>
+    </template>
+  </tbody>
+</table>
+{%- endmacro %}

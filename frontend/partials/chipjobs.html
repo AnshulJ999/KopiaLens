@@ -1,0 +1,8 @@
+            <div class="hd">Jobs</div>
+            <template x-for="j in runningJobs" :key="j.job_id">
+              <button type="button" role="menuitem" @click="chipMenu = ''; openJobPanel(j.job_id)" class="flex items-center gap-2" :title="jobChipTitle(j)">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="j.state === 'running' ? 'bg-warn animate-pulse' : 'bg-danger'"></span>
+                <span class="truncate max-w-[16rem]" x-text="j.label"></span>
+                <span class="ml-auto pl-3 text-muted num" x-text="j.state === 'running' ? jobPct(j) : (j.state === 'failed' ? 'Failed' : 'Errors')"></span>
+              </button>
+            </template>

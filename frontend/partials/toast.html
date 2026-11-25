@@ -1,0 +1,15 @@
+
+    <!-- Action results (one toast per action). Click to dismiss; they clear on their own. -->
+    <div class="fixed bottom-4 right-4 z-[70] flex flex-col items-end gap-2 max-w-md" x-cloak>
+      <template x-for="t in toasts" :key="t.id">
+        <div class="rounded border px-3 py-2 text-sm shadow-xl flex items-start gap-2 cursor-pointer"
+             :class="t.kind === 'ok' ? 'border-ok-bd bg-ok-bg text-ok'
+               : (t.kind === 'info' ? 'border-bd bg-surface2 text-muted' : 'border-warn-bd bg-warn-bg text-warn')"
+             @click="klToastDismiss(t.id)" title="Dismiss">
+          <span class="break-words min-w-0" x-text="t.msg"></span>
+          <button type="button" class="kl-btn shrink-0" style="height:22px" x-show="t.action"
+                  x-text="t.action && t.action.label" @click.stop="t.action.run(); klToastDismiss(t.id)"></button>
+          <span class="shrink-0 opacity-70">&times;</span>
+        </div>
+      </template>
+    </div>

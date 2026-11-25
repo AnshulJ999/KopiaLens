@@ -1,0 +1,628 @@
+{% from "partials/_macros.html" import dryresult, flowsteps %}
+
+    <!-- Snapshots-tab delete: the same card / list / run-bar shape as the file delete panel.
+         Every number here comes from real data: Frees is the accurate union(deleted)-union(kept)
+         figure, the file list has an honest Fast (approximate) and Precise (accurate, cached) view. -->
+    <div x-show="showDelete && deletePlan" @click.self="showDelete=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <!-- x-if (not x-show): the bindings dereference deletePlan.*, which is null until
+           planDelete() fills it - x-show hides the panel but still evaluates the bindings. -->
+      <template x-if="deletePlan">
+      <div class="w-[54rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+          <div class="flex items-center gap-2">
+            <div class="font-medium" x-text="'Delete ' + countOf(deletePlan.count, 'snapshot')"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-snapshots')" @keydown.enter.prevent="openDocs('delete-snapshots')" title="Deleting snapshots, and what it frees">?</span>
+            <button @click="showDelete=false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+          </div>
+          <div class="kl-note mt-0.5 break-all" x-text="deletePlan.sources.length ? deletePlan.sources.map(shortSource).join(' · ') : ''"></div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+          <div class="kl-cards">
+            <div class="kl-card"><div class="k">Snapshots</div><div class="v" x-text="deletePlan.count"></div></div>
+            <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div>
+              <div class="v" x-text="deletePlan.combinedComputing ? '…' : (deletePlan.combinedReclaim != null ? fmtPhys(deletePlan.combinedReclaim) : fmtPhys(deletePlan.reclaim))"></div></div>
+            <div class="kl-card" :class="deletePlan.pinned ? 'warn' : ''"><div class="k">Pinned</div><div class="v" x-text="deletePlan.pinned"></div></div>
+            <div class="kl-card" :class="deletePlan.retained ? 'warn' : ''"><div class="k" title="Kept by a retention rule">Kept by retention</div><div class="v" x-text="deletePlan.retained"></div></div>
+          </div>
+          <div class="kl-note" x-show="deletePlan.combinedComputing">Working out the exact space this frees…</div>
+          <div class="kl-callout" x-show="deletePlan.pinned || deletePlan.retained">Pinned and retained snapshots are restore points you chose to keep. Deleting removes them, and any pins with them.</div>
+          <div class="kl-note" x-show="!deletePlan.combinedComputing && deletePlan.combinedReclaim == null">No analysis yet, so this adds up each snapshot's own figure. Analyze on the Snapshots tab gives the exact one.</div>
+          <div class="kl-note" x-show="deletePlan.combinedReclaim != null && !deletePlan.combinedExact">Content shared between these sources isn't fully subtracted, so this is an estimate.</div>
+
+          <div class="kl-sec">
+            <div class="h">Snapshots deleted <span class="count" x-text="deletePlan.count + ', newest first'"></span></div>
+            <div class="kl-list" style="max-height:150px">
+              <template x-for="s in (deletePlan.rows || [])" :key="s.id">
+                <div class="li">
+                  <span class="num shrink-0" style="width:9.5rem" x-text="humanTime(s.start_time)"></span>
+                  <span class="font-mono break-all grow" x-text="shortSource(s.source)"></span>
+                  <span class="pill warn shrink-0" x-show="s.pinned">pinned</span>
+                  <span class="pill warn shrink-0" x-show="(s.retention || []).length" x-text="'kept: ' + s.retention.join(', ')"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="kl-sec">
+            <div class="h">Biggest files <span class="count" x-text="deletePlan.precise ? 'the accurate list' : 'new in these snapshots'"></span>
+              <span class="acts">
+                <span class="kl-seg">
+                  <span :class="!deletePlan.precise ? 'on' : ''" @click="loadDeletePreview(false)"
+                        title="Approximate: the largest files these snapshots added. Some may still be held by other snapshots.">Fast (approx)</span>
+                  <span :class="deletePlan.precise ? 'on' : ''" @click="loadDeletePreview(true)"
+                        title="Accurate: only content no other snapshot holds. Walks the snapshots once (can take a minute), then it stays cached.">Precise</span>
+                </span>
+              </span>
+            </div>
+            <div class="kl-note" x-show="!deletePlan.precise && !deletePlan.previewLoading">Approximate - some of these files are also in other snapshots, so this list is bigger than what actually frees. Precise shows what really frees.</div>
+            <div class="kl-note" x-show="deletePlan.precise && !deletePlan.previewExact && !deletePlan.previewLoading">Across several backups: content shared between them is not fully subtracted, so this list is an upper bound.</div>
+            <div class="kl-note" x-show="deletePlan.previewLoading">Working this out - the first precise list walks the snapshots once and can take a minute, then it stays cached.</div>
+            <div class="kl-list" style="max-height:190px">
+              <template x-for="(f, i) in (deletePlan.preview || [])" :key="i">
+                <div class="li">
+                  <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                  <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                </div>
+              </template>
+              <div class="li" style="color:var(--muted)" x-show="!(deletePlan.preview || []).length && !deletePlan.previewLoading"
+                   x-text="deletePlan.previewError ? 'Could not read the file list.' : 'No files to list.'"></div>
+            </div>
+          </div>
+
+          <div class="kl-runbar">
+            <button class="kl-btn" @click="deleteDry()" :disabled="deletePlan.dry.running">
+              <span x-text="deletePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
+            </button>
+            <span x-show="deleteDryChecked()" class="pill ok">dry run checked</span>
+            <span class="grow"></span>
+            <button class="kl-btn quiet" x-show="deletePlan.commands" @click="copyText(deletePlan.commands)">Copy command</button>
+            <button class="kl-btn quiet" x-show="deletePlan.commands" @click="deletePlan.showCmd = !deletePlan.showCmd" x-text="deletePlan.showCmd ? 'Hide command' : 'Show command'"></button>
+          </div>
+          <template x-if="deletePlan.showCmd">
+            <div class="kl-term" style="max-height:130px">
+              <div class="flex justify-end"><button class="kl-btn quiet" style="height:22px" @click="copyText(deletePlan.commands)">Copy</button></div>
+              <div class="break-all whitespace-pre-wrap" x-text="deletePlan.commands"></div>
+            </div>
+          </template>
+          {{ dryresult('deletePlan.dry') }}
+        </div>
+
+        <div class="kl-footer shrink-0">
+          <span class="kl-note">Space comes back after the next full maintenance. Files also in other snapshots stay.</span>
+          <span class="spacer"></span>
+          <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
+          <button class="kl-btn" @click="showDelete=false">Cancel</button>
+          <button class="kl-btn danger" @click="executeDelete()" :disabled="deletePlan.dry.running || !!wmOff('full')"
+                  x-text="'Delete ' + countOf(deletePlan.count, 'snapshot') + '…'"></button>
+        </div>
+      </div>
+      </template>
+    </div>
+
+    <!-- restore -->
+    <!-- Excluded item detail -->
+    <div x-show="showExcludedDetail && excludedDetail" @click.self="showExcludedDetail=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[44rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium" x-html="excludedDetail && (itemIconHtml(excludedDetail.name, excludedDetail.is_dir) + escHtml(excludedDetail.name))"></div><button @click="showExcludedDetail=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
+        <div class="text-xs text-muted mt-1 break-all" x-text="excludedDetail && excludedDetail.full_path"></div>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="excludedDetail">
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Total</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.total_size)"></div></div>
+          <div class="rounded border border-ok-bd p-2"><div class="text-[0.6875rem] text-ok">Backed up</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.backed_bytes)"></div></div>
+          <div class="rounded border border-danger-bd p-2"><div class="text-[0.6875rem] text-danger">Excluded</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.excluded_bytes)"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Files (total / excluded)</div><div class="font-medium" x-text="excludedDetail && ((Number(excludedDetail.total_files||0)).toLocaleString(NUM_LOCALE) + ' / ' + (Number(excludedDetail.excluded_files||0)).toLocaleString(NUM_LOCALE))"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">% Excluded</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.pct_excluded != null ? excludedDetail.pct_excluded + '%' : '—')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Backed by repo</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.repo || '—')"></div></div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button @click="excludedInclude(excludedDetail)" class="h-8 rounded border border-ok-bd text-ok px-3 text-xs">Include in Kopia (copy commands)</button>
+          <button @click="excludedExclude(excludedDetail)" class="h-8 rounded border border-bd px-3 text-xs">Exclude…</button>
+          <button @click="copyText(excludedDetail.full_path)" class="h-8 rounded border border-bd px-3 text-xs">Copy path</button>
+        </div>
+        <div class="text-[0.6875rem] text-muted mt-2 whitespace-pre-wrap break-all" x-show="actionText" x-text="actionText"></div>
+      </div>
+    </div>
+
+    <!-- Folder delete plan: everything under a folder or a Search filter, on the shared delete layout. -->
+    <div x-show="showRemove && removePlan" @click.self="removePlan && removePlan.flow ? flowCancel() : closeRemove()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="removePlan">
+      <div class="w-[54rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+          <div class="flex items-center gap-2">
+            <div class="font-medium" x-text="removeTitle()"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files', 'delete-a-folder')" @keydown.enter.prevent="openDocs('delete-files', 'delete-a-folder')" title="Deleting a folder from your snapshots">?</span>
+            <button @click="removePlan.flow ? flowCancel() : closeRemove()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+          </div>
+          <template x-if="removePlan.flow">{{ flowsteps(2) }}</template>
+          <div class="kl-note mt-0.5 break-all font-mono" x-text="removePathLine()"></div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+          <div class="kl-choices">
+            <div>
+              <div class="lbl">Match by</div>
+              <span class="kl-seg">
+                <span :class="removePlan.by === 'object-id' ? 'on' : ''" @click="setRemoveBy('object-id')" title="The same bytes, at any path in these sources">Exact content<span class="num" x-show="removeByFig('object-id')" x-text="' · ' + removeByFig('object-id')"></span></span>
+                <span :class="removePlan.by === 'filename' ? 'on' : ''" @click="setRemoveBy('filename')" title="Any file with these names in these sources">File name<span class="num" x-show="removeByFig('filename')" x-text="' · ' + removeByFig('filename')"></span></span>
+              </span>
+            </div>
+            <div>
+              <div class="lbl">Versions</div>
+              <span class="kl-seg" :class="removePlan.by === 'filename' ? 'opacity-60' : ''" :title="removePlan.by === 'filename' ? 'A delete by file name removes every version' : ''">
+                <span :class="removeAllVersions() ? 'on' : ''" @click="removePlan.by !== 'filename' && !removePlan.all_versions && toggleRemoveAllVersions()">Every version</span>
+                <span :class="!removeAllVersions() ? 'on' : ''" @click="removePlan.by !== 'filename' && removePlan.all_versions && toggleRemoveAllVersions()">Newest only</span>
+              </span>
+            </div>
+            <div>
+              <div class="lbl">In</div>
+              <span class="kl-seg">
+                <span :class="!removePlan.everywhere ? 'on' : ''" @click="removePlan.everywhere && toggleRemoveEverywhere()">These sources</span>
+                <span :class="removePlan.everywhere ? 'on' : ''" @click="!removePlan.everywhere && toggleRemoveEverywhere()" title="Not limited to these sources. Slow.">Every source</span>
+              </span>
+            </div>
+            <div x-show="!removePlan.parts">
+              <div class="lbl" title="The biggest few hundred files usually hold most of the space">Delete</div>
+              <span class="flex items-center gap-2">
+                <span class="kl-seg">
+                  <span :class="!removePlan.top_n ? 'on' : ''" @click="setRemoveTopN(0)">Everything</span>
+                  <template x-for="n in [100, 500, 1000]" :key="n">
+                    <span :class="removePlan.top_n === n ? 'on' : ''" @click="setRemoveTopN(n)" x-text="'Largest ' + n"></span>
+                  </template>
+                </span>
+                <input autocomplete="off" type="number" min="1" placeholder="custom" class="fld h-7 w-20 border border-bd bg-surface2 text-xs" aria-label="Delete only the largest this many files"
+                       :value="([0,100,500,1000].includes(removePlan.top_n) ? '' : removePlan.top_n)"
+                       @change="setRemoveTopN(parseInt($event.target.value, 10) || 0)">
+              </span>
+            </div>
+          </div>
+
+          <div class="kl-note" x-show="removePlan.loading">Checking what this touches…</div>
+          <div class="kl-callout flex items-center gap-3" x-show="!removePlan.loading && removePlan.error"><span x-text="'Couldn’t check what this touches: ' + removePlan.error"></span><button class="kl-btn quiet" @click="_fetchRemovePlan()">Try again</button></div>
+
+          <template x-if="!removePlan.loading && !removePlan.error">
+            <div class="space-y-4">
+              <div class="kl-cards">
+                <div class="kl-card"><div class="k">Files</div><div class="v" x-text="removeFileTotal().toLocaleString(NUM_LOCALE)"></div></div>
+                <div class="kl-card"><div class="k" x-text="removePlan.by === 'filename' ? 'Names' : 'Versions'"></div><div class="v" x-text="Number((removePlan.by === 'filename' ? removePlan.name_count : removePlan.object_count) || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div>
+                  <div class="v" x-text="removePlan.detailLoading ? '…' : (removePlan.detail && removePlan.detail.found !== false ? (removePlan.detail.capped ? '≥ ' : '') + fmtPhys(removePlan.detail.freeable) : '—')"></div></div>
+                <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
+              </div>
+              <div class="kl-note">
+                <span :title="termTip('logical')" x-text="term('logical') + ' ' + fmtB(Number(removePlan.logical || 0) + removeExtra('logical'))"></span><span
+                  :title="termTip('physical')" x-text="' · ' + term('physical') + ' ' + fmtPhys(removePhysTotal()) + ' (newest versions)'"></span><span
+                  x-show="removePlan.detail && removePlan.detail.found !== false && removePlan.detail.shared" x-text="' · shared with other files ' + fmtPhys(removePlan.detail && removePlan.detail.shared)"></span>
+                <button class="kl-btn quiet ml-2" style="height:22px" x-show="!removePlan.detail && !removePlan.detailLoading" @click="removeComputeReclaim()">Work out reclaimable space</button>
+              </div>
+              <div class="kl-note" x-show="removePlan.capped && removePlan.total_physical">
+                Largest <span x-text="countOf(removePlan.file_count, 'file')"></span>: <b x-text="fmtPhys(removePlan.physical)"></b>,
+                <span x-text="removeCoverage() + '%'"></span> of everything matched (<span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span>).
+              </div>
+              <div class="kl-callout" x-show="removePlan.everywhere">Removes this content from every source in the repository.</div>
+              <div class="kl-sec" x-show="!removePlan.everywhere && ((removePlan.breakdown || {}).sources || []).length">
+                <div class="h">Sources <span class="count" x-text="countOf(((removePlan.breakdown || {}).sources || []).length, 'source')"></span></div>
+                <div class="kl-list" style="max-height:132px">
+                  <template x-for="s in ((removePlan.breakdown || {}).sources || [])" :key="s.source">
+                    <div class="li"><span class="font-mono break-all grow" :title="s.source" x-text="shortSource(s.source)"></span><span class="kl-note shrink-0" x-text="countOf(s.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(s.physical)"></span></div>
+                  </template>
+                </div>
+              </div>
+
+              <template x-if="removePlan.parts">
+                <div class="kl-sec">
+                  <div class="h">Selected <span class="count" x-text="countOf(removePlan.parts.length, 'item')"></span></div>
+                  <div class="kl-list" style="max-height:110px">
+                    <template x-for="(pt, i) in removePlan.parts" :key="i">
+                      <div class="li"><span class="font-mono break-all grow" x-text="pt.prefix"></span><span class="kl-note shrink-0" x-text="pt.source ? shortSource(pt.source) : 'every source holding it'"></span></div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- File-name matching sweeps the whole scope, not just the matched plan: show the
+                   collateral count, then the files themselves. -->
+              <template x-if="removePlan.by === 'filename' && removePlan.filename_extra_count">
+                <div>
+                  <div class="kl-callout" x-text="'Matching by file name also removes ' + countOf(removePlan.filename_extra_count, 'other file') + ' with the same names, outside this selection' + (removePlan.everywhere ? ', across the whole repository.' : '.')"></div>
+                  <details class="mt-1">
+                    <summary class="text-xs text-muted cursor-pointer select-none"
+                             ><span x-text="'Other same-named files' + (removePlan.filename_extra_capped ? ' (first ' + (removePlan.filename_extra || []).length + ' of ' + Number(removePlan.filename_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.filename_extra || []).length + ')')"></span>
+                      <button class="kl-btn quiet ml-2" style="height:22px" x-show="fullListOffer((removePlan.filename_extra || []).length, removePlan.filename_extra_count)" @click.prevent="removeShowExtra('filename')"
+                              x-text="fullListLabel((removePlan.filename_extra || []).length, removePlan.filename_extra_count)"></button></summary>
+                    <div class="kl-list mt-1" style="max-height:160px">
+                      <template x-for="(f, i) in (removePlan.filename_extra || [])" :key="i">
+                        <div class="li">
+                          <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                          <span class="pill shrink-0" x-show="f.in_latest === false">deleted from disk</span>
+                          <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </details>
+                </div>
+              </template>
+              <template x-if="removePlan.by !== 'filename' && removePlan.content_extra_count">
+                <div>
+                  <div class="kl-callout" x-text="'Matching by exact content also removes ' + countOf(removePlan.content_extra_count, 'identical copy', 'identical copies') + ' at other paths, outside this selection' + (removePlan.everywhere ? ', across the whole repository.' : '.')"></div>
+                  <details class="mt-1">
+                    <summary class="text-xs text-muted cursor-pointer select-none"
+                             ><span x-text="'Identical copies' + (removePlan.content_extra_capped ? ' (first ' + (removePlan.content_extra || []).length + ' of ' + Number(removePlan.content_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.content_extra || []).length + ')')"></span>
+                      <button class="kl-btn quiet ml-2" style="height:22px" x-show="fullListOffer((removePlan.content_extra || []).length, removePlan.content_extra_count)" @click.prevent="removeShowExtra('content')"
+                              x-text="fullListLabel((removePlan.content_extra || []).length, removePlan.content_extra_count)"></button></summary>
+                    <div class="kl-list mt-1" style="max-height:160px">
+                      <template x-for="(f, i) in (removePlan.content_extra || [])" :key="i">
+                        <div class="li">
+                          <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                          <span class="pill shrink-0" x-show="f.in_latest === false">deleted from disk</span>
+                          <span class="kl-note shrink-0" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span>
+                          <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </details>
+                </div>
+              </template>
+              <div class="kl-sec" x-show="removePlan.by === 'filename' && removePlan.detail && removePlan.detail.kept_count">
+                <div class="h">Identical files with other names <span class="count" x-text="removePlan.detail ? countOf(removePlan.detail.kept_count, 'file') + ' · keep ' + fmtPhys(removePlan.detail.kept) + ' stored' : ''"></span></div>
+                <div class="kl-list" style="max-height:132px">
+                  <template x-for="(f, i) in ((removePlan.detail && removePlan.detail.kept_files) || [])" :key="i">
+                    <div class="li">
+                      <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                      <span class="kl-note shrink-0" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span>
+                      <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <div class="kl-sec" x-show="(removePlan.preview || []).length">
+                <div class="h">What gets removed <span class="count" x-text="removeListCount()"></span>
+                  <span class="acts">
+                    <span class="kl-seg">
+                      <span :class="!removePlan.listView || removePlan.listView === 'files' ? 'on' : ''" @click="removePlan.listView = 'files'">Biggest files</span>
+                      <span :class="removePlan.listView === 'folders' ? 'on' : ''" @click="removePlan.listView = 'folders'">By folder</span>
+                      <span :class="removePlan.listView === 'types' ? 'on' : ''" @click="removePlan.listView = 'types'">By file type</span>
+                    </span>
+                    <button class="kl-btn quiet" style="height:22px" @click="removeDownloadList($event)" title="Every file this removes, as a CSV file">Download list <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+                  </span>
+                </div>
+                <template x-if="!removePlan.listView || removePlan.listView === 'files'">
+                  <div>
+                    <div class="kl-list" style="max-height:240px">
+                      <template x-for="(f, i) in (removePlan.preview || []).slice(0, removePlan.shown || 100)" :key="i">
+                        <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-show="(removePlan.sources_scope || []).length > 1" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                      </template>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <button class="kl-btn quiet" style="height:22px" x-show="(removePlan.shown || 100) < (removePlan.preview || []).length" @click="removePlan.shown = (removePlan.shown || 100) + 100">Show 100 more</button>
+                      <span class="kl-note" x-show="(removePlan.shown || 100) >= (removePlan.preview || []).length && Number(removePlan.file_count || 0) > (removePlan.preview || []).length"
+                            x-text="'The biggest ' + Number((removePlan.preview || []).length).toLocaleString(NUM_LOCALE) + ' are listed here. Download the list for all ' + countOf(Number(removePlan.file_count || 0), 'file') + '.'"></span>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="removePlan.listView === 'folders'">
+                  <div class="kl-list" style="max-height:240px">
+                    <template x-for="f in ((removePlan.breakdown || {}).folders || [])" :key="f.folder">
+                      <div class="li"><span class="font-mono break-all grow" :title="f.folder" x-text="removeFolderLabel(f)"></span><span class="kl-note shrink-0" x-text="countOf(f.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="removePlan.listView === 'types'">
+                  <div class="kl-list" style="max-height:240px">
+                    <template x-for="f in ((removePlan.breakdown || {}).types || [])" :key="f.ext">
+                      <div class="li"><span class="font-mono grow" x-text="f.ext ? '.' + f.ext : 'no extension'"></span><span class="kl-note shrink-0" x-text="countOf(f.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+
+              <div class="kl-runbar">
+                <button class="kl-btn" @click="removePlanDry($event)" :disabled="removePlan.dry.running || !removePlan.file_count">
+                  <span x-text="removePlan.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span>
+                </button>
+                <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
+                <span class="grow"></span>
+                <button class="kl-btn quiet" @click="copyRemoveCommand($event)" :disabled="!removePlan.file_count">Copy command <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+                <button class="kl-btn quiet" @click="removeSaveBat($event)" :disabled="!removePlan.file_count" title="Runs the same commands and logs kopia's output">Save script <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+                <button class="kl-btn quiet" x-show="removePlan.commit" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
+              </div>
+              <template x-if="removePlan.showCmd">
+                <div class="kl-term" style="max-height:150px">
+                  <template x-if="removePlan.commit">
+                    <div>
+                      <div class="t">dry run</div><div class="break-all" x-text="removePlan.dry_run"></div>
+                      <div class="t" style="margin-top:6px">commit</div><div class="break-all" x-text="removePlan.commit"></div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <div class="kl-note" x-show="removePlan.batSaved" x-text="removePlan.batSaved && ('Downloaded: ' + removePlan.batSaved.filename)"></div>
+              {{ dryresult('removePlan.dry') }}
+            </div>
+          </template>
+        </div>
+
+        <div class="kl-footer shrink-0">
+          <span class="kl-note">Space comes back after the next full maintenance.</span>
+          <span class="spacer"></span>
+          <template x-if="!removePlan.flow">
+            <span class="flex items-center gap-2">
+              <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
+              <button class="kl-btn" @click="closeRemove()">Cancel</button>
+              <button class="kl-btn danger" @click="removeRun($event)" :disabled="removePlan.loading || removePlan.dry.running || !removePlan.file_count || !!wmOff('full')"><span x-text="removeConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+            </span>
+          </template>
+          <template x-if="removePlan.flow">
+            <span class="flex items-center gap-2">
+              <button class="kl-btn" @click="flowBackToExclude()">Back</button>
+              <button class="kl-btn primary" @click="flowReview()" :disabled="removePlan.loading || !removePlan.item_count || !removePlan.file_count">Next: review</button>
+            </span>
+          </template>
+        </div>
+      </div>
+      </template>
+    </div>
+
+    <div x-show="showRestore" @click.self="closeRestore()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="restore">
+        <div class="w-[50rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium" x-text="'Restore ' + restore.label"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('restore')" @keydown.enter.prevent="openDocs('restore')" title="Where files go and what happens to existing ones">?</span>
+              <button @click="closeRestore()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <template x-if="restore.plan && restore.plan.items.length === 1">
+              <div class="kl-note mt-0.5 break-all">
+                <span class="font-mono" x-text="restore.plan.items[0].full_path"></span>
+                <span x-text="' · ' + (restore.plan.items[0].type === 'd' ? countOf(restore.plan.items[0].files, 'file') + ' · ' : '') + fmtB(restore.plan.items[0].size)"></span>
+                <span x-show="restore.plan.items[0].snap_time" x-text="' · snapshot ' + humanTime(restore.plan.items[0].snap_time)"></span>
+              </div>
+            </template>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <template x-if="restoreFromRows().length">
+              <div>
+                <div class="text-xs font-medium mb-1">From</div>
+                <template x-for="row in restoreFromRows()" :key="row.i">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="font-mono trunc grow" x-show="restore.items.length > 1" x-text="row.path"></span>
+                    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="restorePickSource(row.i, $event.target.value)">
+                      <template x-for="h in row.holders" :key="h.source">
+                        <option :value="h.source" :selected="h.source === restore.items[row.i].source" x-text="restoreHolderLabel(h, row.holders)"></option>
+                      </template>
+                    </select>
+                  </div>
+                </template>
+                <div class="kl-note">Held by more than one source. The one with the newest backup is picked.</div>
+              </div>
+            </template>
+            <div class="kl-list" style="max-height:110px" x-show="restore.items.length > 1">
+              <template x-for="(it, i) in (restore.plan ? restore.plan.items : restore.items)" :key="i">
+                <div class="li">
+                  <span class="font-mono break-all grow" x-text="it.full_path"></span>
+                  <span class="num shrink-0" style="color:var(--muted)" x-show="it.size !== undefined" x-text="fmtB(it.size)"></span>
+                </div>
+              </template>
+            </div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Restore to</div>
+              <span class="kl-seg">
+                <span :class="restore.mode === 'folder' ? 'on' : ''" @click="restoreSetMode('folder')">A folder</span>
+                <span :class="restore.mode === 'original' ? 'on' : ''" @click="restoreSetMode('original')" title="Write back to the path it was backed up from">Where it came from</span>
+                <span :class="restore.mode === 'beside' ? 'on' : ''" x-show="!restoreHasDirs()" @click="restoreSetMode('beside')" title="A dated copy next to the original, e.g. notes (2026-09-01).txt">Next to the original</span>
+              </span>
+              <div class="flex items-center gap-2 mt-2" x-show="restore.mode === 'folder'">
+                <input autocomplete="off" x-model="restore.target" @input="restoreTargetInput()" class="fld flex-1 border border-bd bg-surface2 font-mono" placeholder="D:\Restored   or   D:\out.zip">
+                <button @click="browseFolder()" class="kl-btn" title="Pick a folder on the computer running KopiaLens">Browse…</button>
+              </div>
+              <div class="kl-note mt-1" x-show="restore.mode === 'folder' && restore.items.length > 1">Files go straight into this folder. Same names get a number.</div>
+              <div class="kl-note mt-1 break-all" x-show="restore.mode !== 'folder' && restore.plan && restore.plan.items.length === 1 && restore.plan.items[0].target"
+                   x-text="'Writes to ' + (restore.plan && restore.plan.items[0] ? restore.plan.items[0].target : '')"></div>
+            </div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Existing files</div>
+              <span class="kl-seg">
+                <span :class="restore.preset === 'safe' ? 'on' : ''" @click="restoreSetPreset('safe')" title="Only add what is missing. Nothing is overwritten.">Keep existing</span>
+                <span :class="restore.preset === 'replace' ? 'on' : ''" @click="restoreSetPreset('replace')" title="Replace files that differ from the snapshot. Extra files stay.">Replace different</span>
+                <span :class="restore.preset === 'exact' ? 'on' : ''" @click="restoreSetPreset('exact')" title="Replace files that differ and delete files the snapshot does not have">Match snapshot</span>
+                <span :class="restore.preset === 'custom' ? 'on' : ''" style="cursor:default" title="Set by the options below">Custom</span>
+              </span>
+            </div>
+
+            <details class="kl-sec" :open="restore.preset === 'custom'">
+              <summary class="h cursor-pointer select-none">More options <span class="text-faint font-normal">(ownership, overwrite, speed)</span></summary>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs mt-2">
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_times"> Restore modified time</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.skip_existing" @change="restoreChanged()"> Skip existing</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore permission errors</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_files" @change="restoreChanged()"> Overwrite files</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_directories" @change="restoreChanged()"> Overwrite folders</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_symlinks" @change="restoreChanged()"> Overwrite symlinks</label>
+                <label class="flex items-center gap-1.5 text-danger"><input autocomplete="off" type="checkbox" x-model="restore.options.delete_extra" @change="restoreChanged()"> Delete extra files</label>
+              </div>
+              <div class="mt-2 flex items-center gap-3 text-xs">
+                <label class="flex items-center gap-1">Parallel <input autocomplete="off" type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
+                <label class="flex items-center gap-1" title="Folders this deep become placeholder files">Shallow depth <input autocomplete="off" type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="full"></label>
+                <label class="flex items-center gap-1" x-show="restore.options.shallow !== '' && restore.options.shallow != null" title="In a shallow restore, files smaller than this are restored in full instead of as placeholders">Full files under <input autocomplete="off" type="number" min="0" x-model="restore.options.shallow_minsize_kb" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="0"> KB</label>
+                <label class="flex items-center gap-1.5" x-show="/\.zip$/i.test(restore.target || '')"><input autocomplete="off" type="checkbox" x-model="restore.options.zip_uncompressed"> Uncompressed .zip</label>
+              </div>
+            </details>
+
+            <div class="kl-note" x-show="restore.loading">Checking…</div>
+            <div class="kl-callout" x-show="restore.error" x-text="restore.error"></div>
+
+            <template x-if="restore.plan && restore.plan.previewed && !restore.loading">
+              <div class="space-y-3">
+                <div class="kl-cards">
+                  <div class="kl-card"><div class="k">Files</div><div class="v" x-text="Number(restore.plan.totals.files).toLocaleString(NUM_LOCALE)"></div></div>
+                  <div class="kl-card good"><div class="k">New</div><div class="v" x-text="Number(restore.plan.totals.new).toLocaleString(NUM_LOCALE)"></div></div>
+                  <div class="kl-card"><div class="k" title="Same size and modified time">Identical</div><div class="v" x-text="Number(restore.plan.totals.identical).toLocaleString(NUM_LOCALE)"></div></div>
+                  <div class="kl-card" :class="restore.plan.totals.different ? 'warn' : ''"><div class="k" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different, kept'"></div><div class="v" x-text="Number(restore.plan.totals.different).toLocaleString(NUM_LOCALE)"></div></div>
+                  <div class="kl-card" :class="restore.plan.totals.extra || restore.plan.totals.extra_unchecked ? 'warn' : ''" x-show="restore.options.delete_extra"><div class="k">Deleted</div><div class="v" x-text="restore.plan.totals.extra_unchecked ? 'Not checked' : Number(restore.plan.totals.extra).toLocaleString(NUM_LOCALE)"></div></div>
+                </div>
+                <div class="kl-note" x-show="restore.plan.items.some((i) => i.archive)">Archive target: nothing on disk to compare.</div>
+                <div class="kl-note flex flex-wrap items-center gap-2" x-show="restore.plan.totals.capped && !restore.plan.full_check">
+                  <span>Over 100,000 files, so the preview checked the first 100,000. Checking all of them can take a while.</span>
+                  <button class="kl-btn quiet" style="height:22px" x-show="!restoreChecking()" @click="restoreCheckAll()">Check all files</button>
+                  <span x-show="restoreChecking()" x-text="'Checking… ' + countOf(restore.check && restore.check.listed, 'file')"></span>
+                  <button class="kl-btn quiet" style="height:22px" x-show="restoreChecking()" @click="restoreCheckStop()">Stop</button>
+                  <span class="text-danger" x-show="restore.check && restore.check.error" x-text="restore.check && restore.check.error"></span>
+                </div>
+                <template x-if="restore.plan.items.some((i) => (i.different_paths || []).length)">
+                  <div class="kl-sec">
+                    <div class="h"><span x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></span>
+                      <span class="count" x-show="restoreListCut('different')" x-text="'first ' + restoreListLen('different').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(restoreListLen('different'), restoreListTotal('different'))" @click="restoreShowPaths('different')"
+                        x-text="fullListLabel(restoreListLen('different'), restoreListTotal('different'))"></button></span></div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.different_paths || [])" :key="'d' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="restore.plan.totals.bad_names">
+                  <div class="kl-sec">
+                    <div class="h"><span x-text="countOf(restore.plan.totals.bad_names, 'name') + ' this computer can\'t use'"></span>
+                      <span class="count" x-show="restoreListCut('bad')" x-text="'first ' + restoreListLen('bad').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(restoreListLen('bad'), restoreListTotal('bad'))" @click="restoreShowPaths('bad')"
+                        x-text="fullListLabel(restoreListLen('bad'), restoreListTotal('bad'))"></button></span></div>
+                    <div class="kl-note">Restoring may stop at these. Tick Continue on errors to skip them.</div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.bad_paths || [])" :key="'b' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="restore.options.delete_extra && restore.plan.items.some((i) => (i.extra_paths || []).length)">
+                  <div class="kl-sec">
+                    <div class="h">Deleted from the destination
+                      <span class="count" x-show="restoreListCut('extra')" x-text="'first ' + restoreListLen('extra').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(restoreListLen('extra'), restoreListTotal('extra'))" @click="restoreShowPaths('extra')"
+                        x-text="fullListLabel(restoreListLen('extra'), restoreListTotal('extra'))"></button></span></div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.extra_paths || [])" :key="'x' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Kopia has no restore dry run. Preview compares the snapshot with the destination.</span>
+            <span class="spacer"></span>
+            <button class="kl-btn quiet" x-show="restore.plan && restore.plan.items.length === 1"
+                    @click="downloadItem(restore.items[0])" :disabled="!!downloading" x-text="downloading ? 'Preparing…' : restore.plan && restore.plan.items[0] && restore.plan.items[0].type === 'd' ? 'Download .zip' : 'Download'"></button>
+            <button class="kl-btn" @click="restoreLoad(true)" :disabled="restore.loading">Preview</button>
+            <span class="kl-note text-warn" x-show="wmWhy('restores')" x-text="wmWhy('restores')"></span>
+            <button class="kl-btn" :class="restoreDanger() ? 'danger' : 'primary'" @click="restoreExecute()" :disabled="restore.loading || !!wmOff('restores')">Restore…</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- snapshot diff -->
+    <!-- In-app folder browser (actions.js fbOpen): folders on the computer running KopiaLens. -->
+    <template x-if="fb">
+      <div class="fixed inset-0 z-[62] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="fbClose(null)">
+        <div role="dialog" aria-modal="true" aria-label="Choose a folder" class="w-[36rem] max-w-full max-h-[80vh] rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 pb-2 space-y-2">
+            <h3 class="text-[0.9375rem] font-semibold leading-snug">Choose a folder</h3>
+            <form class="flex items-center gap-2" @submit.prevent="fbGo(fb.input)">
+              <button type="button" class="kl-btn shrink-0" :disabled="!fb.path" @click="fbGo(fb.parent)" title="Up one folder">Up</button>
+              <input autocomplete="off" x-model="fb.input" class="fld flex-1 min-w-0 border border-bd bg-surface2 font-mono" aria-label="Folder path"
+                     :placeholder="host.os === 'windows' ? 'D:\\Restored' : '/data/restored'">
+              <button type="submit" class="kl-btn shrink-0">Go</button>
+            </form>
+            <p class="text-xs" style="color:var(--danger)" x-show="fb.error" x-text="fb.error"></p>
+          </div>
+          <div class="flex-1 min-h-[12rem] overflow-auto border-y border-bd">
+            <p class="kl-note p-3" x-show="fb.loading">Loading…</p>
+            <p class="kl-note p-3" x-show="!fb.loading && !fb.error && !fb.folders.length" x-text="fb.path ? 'No folders inside this one.' : 'No drives found.'"></p>
+            <template x-for="f in fb.folders" :key="f.path">
+              <button type="button" class="w-full text-left px-3 py-1.5 font-mono break-all hover:bg-surface2 focus:bg-surface2"
+                      @click="fbGo(f.path)" x-text="f.name"></button>
+            </template>
+            <p class="kl-note p-3" x-show="fb.truncated">Showing the first 5,000 folders. Type a path to go further.</p>
+          </div>
+          <div class="p-4 pt-3 flex items-center justify-end gap-2">
+            <button type="button" class="kl-btn" @click="fbClose(null)">Cancel</button>
+            <button type="button" class="kl-btn primary" :disabled="!fb.path" @click="fbClose(fb.path)">Choose this folder</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <div x-show="showDiff" @click.self="showDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-muted" x-text="diffRange"></span><span class="text-xs text-warn" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
+        <pre class="mt-2 text-[0.6875rem] whitespace-pre-wrap bg-surface2 rounded p-2 max-h-[70vh] overflow-auto" x-text="diffText"></pre>
+      </div>
+    </div>
+
+    <!-- Backblaze file detail -->
+    <div x-show="bzDetail" @click.self="bzDetail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[44rem] max-w-full rounded-lg border border-bd bg-surface p-4 text-sm">
+        <div class="flex items-start gap-2">
+          <div class="font-medium break-all" x-text="bzDetail && bzDetail.full_path"></div>
+          <button @click="bzDetail=null" class="ml-auto shrink-0 text-muted text-lg leading-none">&times;</button>
+        </div>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="bzDetail">
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Size</div><div class="font-medium" x-text="bzDetail && fmtB(bzDetail.size)"></div></div>
+          <div class="rounded p-2" :class="bzDetail && bzDetail.excluded ? 'border border-danger-bd' : 'border border-ok-bd'"><div class="text-[0.6875rem] text-muted">Status</div><div class="font-medium" x-text="bzDetail && (bzDetail.excluded ? 'Excluded' : 'Backed up')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Drive</div><div class="font-medium" x-text="bzDetail && bzLabel(bzDetail.drive)"></div></div>
+        </div>
+        <div class="mt-2 text-[0.75rem]" x-show="bzDetail && bzDetail.excl_rule"><span class="text-muted">Excluded by rule:</span> <span class="font-mono" x-text="bzDetail && bzDetail.excl_rule"></span></div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button @click="bzJumpTree(bzDetail)" class="h-8 rounded border border-bd px-3 text-xs">Browse folder (Tree)</button>
+          <button @click="bzOpenGen('editable_endswith', bzDetail.name)" class="h-8 rounded border border-bd px-3 text-xs">Generate exclusion (this file)</button>
+          <button @click="copyText(bzDetail.full_path)" class="h-8 rounded border border-bd px-3 text-xs">Copy path</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Backblaze generate-exclusion (generation only; never writes to bzdata) -->
+    <div x-show="bzShowGen" @click.self="bzShowGen=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <!-- x-if (not x-show): the bindings below dereference bzGen.*, which is null until opened. -->
+      <template x-if="bzGen">
+      <div class="w-[40rem] max-w-full rounded-lg border border-bd bg-surface p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium">Generate exclusion</div><button @click="bzShowGen=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
+        <div class="mt-2 text-[0.75rem] text-muted">KopiaLens never writes to Backblaze (read-only). This generates a paste-ready rule + how to apply it.</div>
+        <div class="mt-3 flex items-center gap-2">
+          <span class="text-[0.6875rem] uppercase text-muted">Kind</span>
+          <select autocomplete="off" x-model="bzGen.kind" @change="bzDoGen()" class="fld border border-bd bg-surface2 text-xs">
+            <option value="folder">Folder (relative, all drives)</option>
+            <option value="editable_endswith">Ends with</option>
+            <option value="editable_contains">Contains</option>
+          </select>
+          <input autocomplete="off" x-model="bzGen.value" @input.debounce.300ms="bzDoGen()" class="fld flex-1 border border-bd bg-surface2 font-mono text-xs">
+        </div>
+        <template x-if="bzGen.result">
+          <div class="mt-3 space-y-2">
+            <div x-show="bzGen.result.error" class="text-danger text-xs" x-text="bzGen.result.error"></div>
+            <template x-if="bzGen.result.snippet">
+              <div>
+                <div class="text-[0.6875rem] text-muted">Snippet</div>
+                <div class="flex items-center gap-2"><div class="font-mono break-all text-[0.75rem] flex-1 bg-surface2 rounded p-2" x-text="bzGen.result.snippet"></div><button @click="copyText(bzGen.result.snippet)" class="text-ok text-xs shrink-0">copy</button></div>
+              </div>
+            </template>
+            <div x-show="bzGen.result.how" class="text-[0.75rem] text-muted" x-text="bzGen.result.how"></div>
+          </div>
+        </template>
+      </div>
+      </template>
+    </div>
+

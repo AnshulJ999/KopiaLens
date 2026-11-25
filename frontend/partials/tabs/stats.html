@@ -1,0 +1,158 @@
+      <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Repository</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('repository')" @keydown.enter.prevent="openDocs('repository')" title="Storage, maintenance and health of this repository.">?</span>
+          <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
+          <span class="text-[0.6875rem] text-muted" x-show="statsData && statsData.computed_at" x-text="statsData && statsData.computed_at ? 'Updated ' + humanTime(statsData.computed_at) : ''"></span>
+          <!-- the nightly retention self-check; silent while it agrees with kopia -->
+          <span class="kl-note text-warn" x-show="retentionIssueText()" x-text="retentionIssueText()"></span>
+        </div>
+        <template x-if="statsData">
+          <div class="space-y-3">
+            <!-- health checks -->
+            <div class="rounded border border-bd bg-surface p-3">
+              <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Health</span>
+                <span class="text-[0.6875rem] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? countOf(statsData.health.filter(h => h.status==='warn').length, 'warning') : ''"></span></div>
+              <div class="space-y-1.5">
+                <template x-for="h in (statsData.health || [])" :key="h.id">
+                  <div class="flex items-start gap-2 text-xs rounded p-2 border"
+                       :class="h.status==='warn' ? 'bg-warn-bg border-warn-bd' : h.status==='ok' ? 'bg-ok-bg border-ok-bd' : 'bg-surface2 border-bd-soft'">
+                    <i class="ic mt-0.5" :class="h.status==='warn' ? 'ic-warning' : h.status==='ok' ? 'ic-check' : 'ic-info'"></i>
+                    <div class="min-w-0">
+                      <div class="font-medium" x-text="h.title"></div>
+                      <div class="text-muted" x-text="h.detail"></div>
+                    </div>
+                    <button x-show="h.fix_command" @click="copyText(h.fix_command)" class="ml-auto shrink-0 h-6 rounded border border-bd px-2 text-[0.625rem]" :title="'Copy: ' + h.fix_command">Copy fix</button>
+                  </div>
+                </template>
+                <div x-show="!(statsData.health || []).length" class="text-xs text-ok flex items-center gap-1"><i class="ic ic-check"></i>All checks passed.</div>
+              </div>
+            </div>
+
+            <!-- cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[0.6875rem] text-muted mb-1">Storage</div>
+                <div class="text-sm font-medium break-all" x-text="statsData.parsed?.storage_type || '?'"></div>
+                <div class="text-[0.6875rem] text-muted break-all mb-1" x-text="statsData.parsed?.storage_path || ''"></div>
+                <div class="text-xs" x-show="statsData.parsed?.capacity" x-text="fmtBytes(statsData.parsed?.available || 0) + ' free of ' + fmtBytes(statsData.parsed?.capacity || 0)"></div>
+                <div class="text-[0.625rem] text-muted" x-show="statsData.parsed?.unique_id" x-text="'id ' + statsData.parsed?.unique_id + '…'"></div>
+              </div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[0.6875rem] text-muted mb-1">Content</div>
+                <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString(NUM_LOCALE) + ' contents'"></div>
+                <div class="text-xs text-muted" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
+                <div class="text-xs" x-text="'packed ' + fmtBytes(statsData.parsed?.content?.packed_bytes || 0) + (statsData.parsed?.content?.compression_pct != null ? ' (' + statsData.parsed.content.compression_pct + '% saved)' : '')"></div>
+                <div class="text-[0.6875rem] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-muted' : 'text-ok'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>
+              </div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[0.6875rem] text-muted mb-1">Maintenance</div>
+                <div class="text-xs flex items-center gap-1">
+                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn"><i class="ic ic-warning"></i></span>
+                  <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
+                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_quick" x-text="'last quick ' + humanTime(statsData.parsed?.maintenance?.last_quick)"></div>
+                <div class="text-xs" x-show="statsData.parsed?.maintenance?.last_full" :class="statsData.parsed?.maintenance?.last_full_success === false ? 'text-warn' : ''" x-text="'last full ' + humanTime(statsData.parsed?.maintenance?.last_full) + (statsData.parsed?.maintenance?.last_full_success === false ? ' (failed)' : '')"></div>
+                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run && !statsData.parsed?.maintenance?.last_quick && !statsData.parsed?.maintenance?.last_full" x-text="'last run ' + humanTime(statsData.parsed?.maintenance?.last_run)"></div>
+                <div class="text-[0.6875rem] text-muted" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + humanTime(statsData.parsed?.maintenance?.next_quick)"></div>
+                <div class="text-[0.6875rem] text-muted" x-show="statsData.parsed?.maintenance?.next_full" x-text="'next full ' + humanTime(statsData.parsed?.maintenance?.next_full)"></div>
+                <button class="kl-btn mt-2" style="height:24px" @click="openMaint()">Run maintenance…</button>
+              </div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[0.6875rem] text-muted mb-1">KopiaLens index</div>
+                <!-- reads parsed.duckdb_health, NOT health: the health list carries only WARNINGS
+                     (an entry in both renders twice), so a healthy index would leave this blank. -->
+                <template x-for="h in (statsData.parsed?.duckdb_health || [])" :key="h.id">
+                  <div>
+                    <div class="text-sm font-medium" :title="h.tip || ''" x-text="h.title.replace('Index database: ', '').replace('Index database ', '')"></div>
+                    <div class="text-[0.6875rem] text-muted" x-text="h.detail"></div>
+                  </div>
+                </template>
+                <div class="text-[0.6875rem] text-muted mt-1">Audit trail: <span x-text="fmtBytes(statsData.audit_size || 0)"></span>, never trimmed</div>
+              </div>
+            </div>
+
+            <!-- the audit trail moved to the Logs tab; its size stays a repository fact -->
+
+            <div class="rounded border border-bd bg-surface p-3" x-show="statsData.parsed?.details" data-testid="repo-details">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-sm font-medium">Details</span>
+                <span class="grow"></span>
+                <button class="kl-btn" style="height:24px" @click="showCli('repository')">Show command</button>
+                <button class="kl-btn" style="height:24px" @click="openVerify()" x-show="!isDemo()">Verify backups…</button>
+              </div>
+              <template x-if="statsData.parsed?.details">
+                <div class="kl-facts">
+                  <div class="r"><span class="k">Description</span>
+                    <span class="flex items-center gap-2 min-w-0"><span class="break-all" x-text="statsData.parsed.details.description || '—'"></span>
+                      <button class="kl-btn quiet shrink-0" style="height:22px" x-show="!isDemo()" @click="statsEditDescription()">Edit…</button></span></div>
+                  <div class="r"><span class="k">Connection file</span><span class="break-all font-mono" x-text="statsData.parsed.details.config_file || '—'"></span></div>
+                  <div class="r"><span class="k">Connected as</span><span class="break-all" x-text="statsData.parsed.details.connected_as + (statsData.parsed.details.read_only ? ' (read-only)' : '')"></span></div>
+                  <div class="r"><span class="k">Snapshot scripts</span><span x-text="statsData.parsed.details.scripts ? 'Allowed on this computer' : 'Off on this computer'"></span></div>
+                  <div class="r"><span class="k">Encryption</span><span x-text="statsData.parsed.details.encryption || '—'"></span></div>
+                  <div class="r"><span class="k">Hash</span><span x-text="statsData.parsed.details.hash || '—'"></span></div>
+                  <div class="r"><span class="k">Splitter</span><span x-text="statsData.parsed.details.splitter || '—'"></span></div>
+                  <div class="r"><span class="k">Error correction</span><span x-text="statsData.parsed.details.ecc || 'Off'"></span></div>
+                  <div class="r"><span class="k">Format version</span><span x-text="statsData.parsed.details.format_version + ' (index ' + statsData.parsed.details.index_version + ')'"></span></div>
+                  <div class="r"><span class="k">Pack size</span><span x-text="fmtBytes(statsData.parsed.details.max_pack_size || 0)"></span></div>
+                  <div class="r"><span class="k">Epoch index</span><span x-text="statsData.parsed.details.epochs ? 'On' : 'Off'"></span></div>
+                </div>
+              </template>
+            </div>
+
+            <div class="rounded border border-bd bg-surface p-3">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium">Versions worth pruning</span>
+                <span class="text-[0.6875rem] text-muted">Old versions of big files that free the most on their own</span>
+                <button @click="openSearchView('prune')" class="ml-auto h-7 rounded border border-bd px-2 text-xs" title="The same list in Search: sorting, columns and CSV">Open in Search</button>
+                <button @click="loadPruneOutliers()" :disabled="pruneOutliers && pruneOutliers.loading" class="h-7 rounded border border-bd px-2 text-xs"
+                        x-text="pruneOutliers ? 'Refresh' : 'Find them'"></button>
+              </div>
+              <template x-if="pruneOutliers">
+                <div class="mt-2">
+                  <div x-show="pruneOutliers.loading" class="text-[0.6875rem] text-muted">Looking…</div>
+                  <div x-show="pruneOutliers.error" class="text-[0.6875rem] text-danger" x-text="pruneOutliers.error"></div>
+                  <div x-show="!pruneOutliers.loading && !pruneOutliers.ready" class="text-[0.6875rem] text-muted">Available after the next index.</div>
+                  <div x-show="!pruneOutliers.loading && pruneOutliers.ready && !pruneOutliers.rows.length && !pruneOutliers.error" class="text-[0.6875rem] text-muted">No old version frees much on its own.</div>
+                  <table x-show="pruneOutliers.rows.length" class="w-full text-xs mt-1">
+                    <thead><tr class="text-left text-muted">
+                      <th class="px-2 py-1 font-medium">File</th><th class="px-2 py-1 font-medium">Version from</th>
+                      <th class="px-2 py-1 font-medium text-right" :title="termTip('logical')" x-text="term('logical')"></th><th class="px-2 py-1 font-medium text-right" :title="termTip('reclaimableOwn')" x-text="term('reclaimableOwn')"></th>
+                      <th class="px-2 py-1 font-medium text-right">Versions</th><th></th></tr></thead>
+                    <tbody>
+                      <template x-for="(r, i) in pruneOutliers.rows" :key="i">
+                        <tr class="border-t border-bd-soft">
+                          <td class="px-2 py-1 font-mono break-all" x-text="r.full_path"></td>
+                          <td class="px-2 py-1 whitespace-nowrap" x-text="fmtDate(r.first)"></td>
+                          <td class="px-2 py-1 text-right whitespace-nowrap" x-text="fmtB(r.size)"></td>
+                          <td class="px-2 py-1 text-right whitespace-nowrap font-medium" style="color:var(--ok)" x-text="fmtPhys(r.frees)"></td>
+                          <td class="px-2 py-1 text-right" x-text="r.versions"></td>
+                          <td class="px-2 py-1 text-right"><button class="kl-btn" style="height:22px" @click="openPrune(r.full_path, r.source)">Prune… <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span></button></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+
+            <!-- raw kopia output, kept for the power-user view -->
+            <details class="rounded border border-bd bg-surface p-3">
+              <summary class="text-sm font-medium cursor-pointer select-none">Raw kopia output</summary>
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+                <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info']]" :key="blk[1]">
+                  <div class="rounded border border-bd-soft p-2">
+                    <div class="mb-1 text-xs text-muted" x-text="blk[0]"></div>
+                    <pre class="text-[0.6875rem] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
+                  </div>
+                </template>
+                <div class="rounded border border-bd-soft p-2">
+                  <div class="mb-1 flex items-center gap-2"><span class="text-xs text-muted">Blob stats</span>
+                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-bd px-2 text-[0.625rem] disabled:opacity-50" x-text="blobLoading ? 'Running…' : 'Run blob stats…'"></button>
+                    <span class="text-[0.625rem] text-muted">Slow on large repositories</span></div>
+                  <pre x-show="blobStats || statsData.blob_stats" class="text-[0.6875rem] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="blobStats || statsData.blob_stats"></pre>
+                </div>
+              </div>
+            </details>
+          </div>
+        </template>
+      </section>

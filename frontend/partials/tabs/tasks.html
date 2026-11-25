@@ -1,0 +1,93 @@
+{% from "partials/_macros.html" import task_counters %}
+      <section x-show="active==='tasks'" class="h-full flex flex-col gap-2 min-h-0" data-testid="tasks-tab">
+        <div class="kl-toolbar flex-wrap">
+          <span class="font-medium">Tasks</span>
+          <span class="kl-seg">
+            <span :class="taskFilter.status === 'all' ? 'on' : ''" @click="taskFilter.status = 'all'; renderTasks()">All</span>
+            <span :class="taskFilter.status === 'running' ? 'on' : ''" @click="taskFilter.status = 'running'; renderTasks()">Running</span>
+            <span :class="taskFilter.status === 'failed' ? 'on' : ''" @click="taskFilter.status = 'failed'; renderTasks()">Failed</span>
+          </span>
+          <select autocomplete="off" x-model="taskFilter.kind" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Kind">
+            <option value="all">All kinds</option>
+            <template x-for="k in taskKinds()" :key="k"><option :value="k" :selected="k == taskFilter.kind" x-text="k"></option></template>
+          </select>
+          <select autocomplete="off" x-model="taskFilter.repo" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Repository">
+            <option value="all">All repositories</option>
+            <template x-for="r in repos.filter((x) => x.kind !== 'backblaze')" :key="r.id"><option :value="r.id" :selected="r.id == taskFilter.repo" x-text="r.name"></option></template>
+          </select>
+          <label class="flex items-center gap-1.5 text-xs" :title="'Tasks that finished without errors in under ' + countOf(taskRoutineSeconds, 'second')">
+            <input autocomplete="off" type="checkbox" x-model="taskHideRoutine" @change="klSet({ task_hide_routine: taskHideRoutine }); renderTasks()" data-testid="task-hide-routine">Hide routine</label>
+          <input autocomplete="off" x-model="taskFilter.text" @input.debounce.200ms="renderTasks()" placeholder="Filter by folder or text"
+                 class="fld h-7 border border-bd bg-surface2 text-xs w-56" aria-label="Filter tasks">
+          <span class="grow"></span>
+          <span class="text-xs text-muted" x-show="taskHistoryDays" x-text="'Kept ' + taskHistoryDays + ' days'"
+                title="How long finished backups and maintenance stay here. Change it in Settings, Advanced."></span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tasks')" @keydown.enter.prevent="openDocs('tasks')" title="Backups, maintenance and KopiaLens jobs, running and finished.">?</span>
+          <button class="kl-btn" @click="refreshTasks()" :disabled="tasksRefreshing" title="Reload the list"><i class="ic ic-refresh" :class="tasksRefreshing ? 'animate-spin' : ''"></i> <span x-text="tasksRefreshing ? 'Refreshing…' : 'Refresh'"></span></button>
+        </div>
+        <template x-if="mounts.length">
+          <div class="shrink-0">
+{% include "partials/mountlist.html" %}
+          </div>
+        </template>
+        <div class="min-h-0 flex-1 flex flex-col gap-2">
+          <div id="tasksTable" class="min-h-[12rem] flex-1"></div>
+          <template x-if="taskSel">
+           <div :class="taskView === 'panel' ? 'shrink-0' : 'fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6'" @click.self="taskView !== 'panel' && closeTask()">
+            <div class="bg-surface rounded-lg border border-bd w-full flex flex-col" :class="taskView === 'panel' ? 'h-[22rem]' : 'max-w-4xl h-[85vh]'" :role="taskView === 'panel' ? 'region' : 'dialog'" :aria-modal="taskView !== 'panel'" data-testid="task-panel">
+              <div class="flex items-center gap-3 px-3 py-2 border-b border-bd">
+                <div class="min-w-0 grow">
+                  <div class="font-medium flex items-center gap-2">
+                    <span x-text="taskSel.kind"></span>
+                    <span x-show="taskSel.status === 'running'" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+                  </div>
+                  <div class="text-xs text-muted truncate" :title="taskSel.description"
+                       x-text="repoLabel(taskSel.repo) + ' · ' + taskWhat(taskSel)"></div>
+                </div>
+                <button class="kl-btn danger" x-show="taskSel.status === 'running'" @click="stopTask()">Stop</button>
+                <button class="kl-btn quiet" x-show="taskSel.job_id" @click="const j = taskSel.job_id; closeTask(); openJobPanel(j)">Open in job panel</button>
+                <button class="kl-btn quiet" @click="setTaskView(taskView === 'panel' ? 'popup' : 'panel')" data-testid="task-view-switch"
+                        :title="taskView === 'panel' ? 'Open as a full-size popup' : 'Show as a small panel under the list'" :aria-label="taskView === 'panel' ? 'Full size' : 'Small panel'">
+                  <i class="ic" :class="taskView === 'panel' ? 'ic-expand' : 'ic-dock'"></i></button>
+                <button class="kl-btn quiet" @click="closeTask()" title="Close" aria-label="Close"><i class="ic ic-close"></i></button>
+              </div>
+              <div class="px-3 py-2 border-b border-bd text-xs flex flex-wrap gap-x-6 gap-y-1">
+                <span :class="taskStatusClass(taskSel)" class="font-medium break-all" x-text="taskSummary(taskSel)"></span>
+                <span><span class="text-muted">Started</span> <span x-text="freshTime(taskSel.start)"></span></span>
+                <span x-show="taskSel.end"><span class="text-muted">Finished</span> <span x-text="freshTime(taskSel.end)"></span></span>
+                <span x-show="taskSel.start"><span class="text-muted">Duration</span> <span x-text="taskTook(taskSel)"></span></span>
+                <span x-show="taskSel.total"><span class="text-muted">Steps</span> <span x-text="taskSel.done + ' of ' + taskSel.total"></span></span>
+              </div>
+              <div class="px-3 py-2 border-b border-bd grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="task-summary">
+                <template x-for="f in taskFacts(taskSel)" :key="f[0]">
+                  <div class="rounded border border-bd-soft px-2 py-1 min-w-0">
+                    <div class="text-[0.625rem] text-muted" x-text="f[0]"></div>
+                    <div class="text-xs font-medium truncate" :class="f[2] || ''" :title="f[1]" x-text="f[1]"></div>
+                  </div>
+                </template>
+              </div>
+              <div class="min-h-0 flex-1 flex flex-col md:flex-row">
+                <template x-if="taskCounters(taskSel).length">
+                  <div class="md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-bd-soft">
+                    {{ task_counters('taskSel') }}
+                  </div>
+                </template>
+                <div class="min-h-0 flex-1 flex flex-col">
+                  <div class="flex items-center gap-2 px-2 py-1 border-b border-bd-soft text-xs" x-show="taskSel.kopia_log">
+                    <span class="kl-seg" role="radiogroup" aria-label="Log">
+                      <button type="button" role="radio" :aria-checked="taskLogMode === 'own'" :class="taskLogMode === 'own' ? 'on' : ''" @click="setTaskLog('own')">Output</button>
+                      <button type="button" role="radio" :aria-checked="taskLogMode === 'kopia'" :class="taskLogMode === 'kopia' ? 'on' : ''" @click="setTaskLog('kopia')" data-testid="task-full-log">Full log</button>
+                    </span>
+                    <span class="text-muted" x-show="taskLogMode === 'kopia'" x-text="taskLogSkipped ? 'The last part of kopia’s own log' : 'kopia’s own log'"></span>
+                  </div>
+                  <div class="kl-term whitespace-pre-wrap break-all min-h-[8rem] flex-1 rounded-none border-0" x-ref="taskTerm">
+                    <template x-for="(ln, i) in taskLines" :key="i"><div :class="klLogLineWarn(logMsg(ln))"><span x-text="logMsg(ln)"></span><span class="text-muted" x-text="logDetail(ln)"></span></div></template>
+                    <div x-show="!taskLines.length" class="text-muted" x-text="taskSel.status === 'running' ? 'Waiting for output…' : 'No log for this task.'"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+           </div>
+          </template>
+        </div>
+      </section>

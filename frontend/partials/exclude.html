@@ -1,0 +1,245 @@
+{% from "partials/_macros.html" import rulediff, flowsteps %}
+
+    <!-- Exclude panel: stacks over the detail modal (z-50 above its z-40), under the shared
+         confirm (z-60). Every write is priced against the index before Exclude is enabled. -->
+    <div x-show="showExclude" @click.self="exClose()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="exDialog">
+        <div class="max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col" :class="exDialog.mode === 'delete' ? 'w-[54rem]' : 'w-[46rem]'">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude and delete' : 'Exclude'"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('exclude')" @keydown.enter.prevent="openDocs('exclude')" title="What the rule matches and where it goes">?</span>
+              <button @click="exClose()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+            </div>
+            <template x-if="exDialog.mode === 'delete' && !exAlreadyExcluded()">{{ flowsteps(1) }}</template>
+            <div class="kl-note mt-0.5 break-all font-mono" x-show="!exDialog.multi" x-text="exDialog.path"></div>
+            <div class="kl-note mt-0.5" x-show="exDialog.multi" x-text="exDialog.multi ? exDialog.items.length + ' items' : ''"></div>
+          </div>
+
+          <!-- several items -->
+          <template x-if="exDialog.multi">
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div>
+              <div class="text-xs font-medium mb-1">Match</div>
+              <span class="kl-seg">
+                <span :class="exDialog.shape === 'exact' ? 'on' : ''" @click="exMultiSetShape('exact')" title="Smart may switch an item to Same name so the rule reaches every backup">This item</span>
+                <span :class="exDialog.shape === 'parent' ? 'on' : ''" @click="exMultiSetShape('parent')">Its folder</span>
+                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exMultiSetShape('name')">Same name<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+                <span :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exMultiSetShape('extension')" title="Folders keep This item">Same extension<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exMultiSetShape('similar')">Similar names<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+              </span>
+              <template x-if="['name', 'extension', 'similar'].includes(exDialog.shape)">
+                <div class="mt-2">
+                  <div class="text-xs font-medium mb-1">Where</div>
+                  <span class="kl-seg">
+                    <span x-show="exDialog.shape !== 'name'" :class="exDialog.where === 'here' ? 'on' : ''" @click="exMultiSetWhere('here')">In its folder only</span>
+                    <span :class="exDialog.where === 'under' ? 'on' : ''" @click="exMultiSetWhere('under')">Under its folder</span>
+                    <span :class="exDialog.where === 'any' ? 'on' : ''" @click="exMultiSetWhere('any')">Anywhere</span>
+                  </span>
+                </div>
+              </template>
+            </div>
+            <div class="kl-sec">
+              <div class="h">Items <span class="count" x-text="exDialog.items.filter((i) => i.on).length + ' of ' + exDialog.items.length"></span></div>
+              <div class="space-y-1">
+                <template x-for="(it, i) in exDialog.items" :key="i">
+                  <label class="flex items-start gap-2 rounded border px-2 py-1.5 cursor-pointer" :class="it.on ? 'border-fg bg-sel' : 'border-bd-soft'">
+                    <input autocomplete="off" type="checkbox" class="shrink-0 mt-0.5" :checked="it.on" :disabled="it.loading || !!it.error" @change="exMultiToggle(it)">
+                    <div class="min-w-0 grow">
+                      <div class="font-mono text-xs break-all" x-text="it.path"></div>
+                      <div class="kl-note" x-text="exItemStatus(it)"></div>
+                      <template x-for="t in exItemTargets(it)" :key="t.target">
+                        <div class="font-mono text-[0.6875rem] break-all" style="color:var(--muted)" x-text="(t.patterns || [t.pattern]).join(',  ') + '  →  ' + exLabel(t.target)"></div>
+                      </template>
+                    </div>
+                  </label>
+                </template>
+              </div>
+            </div>
+            <div class="rounded border border-bd bg-surface2 p-2 flex items-center gap-2">
+              <span class="text-xs font-medium">Leaves out</span>
+              <span class="text-xs" style="color:var(--muted)" x-show="exDialog.loading || exDialog.pricing">checking the index…</span>
+              <span class="text-xs font-medium" x-show="!exDialog.loading && !exDialog.pricing && exMultiWrites().length" x-text="exMultiKeepout()"></span>
+            </div>
+            <div class="kl-note font-medium" style="color:var(--fg)" x-show="!exDialog.loading" x-text="exMultiCoverageText()"></div>
+            <template x-if="exDiffList().length">
+              <div class="kl-sec">
+                <div class="h">Changes</div>
+                <div class="space-y-2">
+                  <template x-for="df in exDiffList()" :key="df.label">
+                    <div>
+                      <div class="kl-callout" x-show="df.error" x-text="df.label + ': ' + df.error"></div>
+                      <template x-if="df.before !== null">{{ rulediff('df') }}</template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          </template>
+
+          <!-- one item -->
+          <template x-if="!exDialog.multi">
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <!-- match type + where it applies -->
+            <div>
+              <div class="text-xs font-medium mb-1">Match</div>
+              <span class="kl-seg">
+                <span :class="exDialog.shape === 'exact' ? 'on' : ''" @click="exSelectShape('exact')">This item</span>
+                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exSelectShape('name')">Same name<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+                <span x-show="exDialog.kind === 'file'" :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exSelectShape('extension')">Same extension<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exSelectShape('similar')">Similar names<span class="protag ml-1" x-show="proTag('exclude_smart')" :title="proTagTitle()">PRO</span></span>
+                <span :class="exDialog.shape === 'custom' ? 'on' : ''" @click="exSelectShape('custom')">Custom</span>
+              </span>
+              <div class="kl-note mt-1" x-show="exShapeLabel()" x-text="exShapeLabel()"></div>
+              <template x-if="exLevelChoices().length > 1">
+                <div class="mt-2">
+                  <div class="text-xs font-medium mb-1">Exclude</div>
+                  <div class="kl-chips">
+                    <template x-for="c in exLevelChoices()" :key="'l' + c.level">
+                      <span class="kl-chip" :class="exScopeOn(c) ? 'on' : ''" @click="exSetScope(c.where, c.level)" x-text="c.label"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <template x-if="exWhereChoices().length">
+                <div class="mt-2">
+                  <div class="text-xs font-medium mb-1">Where</div>
+                  <div class="kl-chips">
+                    <template x-for="c in exWhereChoices()" :key="c.where + c.level">
+                      <span class="kl-chip" :class="exScopeOn(c) ? 'on' : ''" @click="exSetScope(c.where, c.level)" x-text="c.label"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <template x-if="exDialog.shape === 'similar'">
+                <div class="mt-2">
+                  <input autocomplete="off" x-model="exDialog.leaf" @input="exLeafInput()"
+                         class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="name pattern, e.g. log-*.txt">
+                  <div class="kl-note mt-1">Numbers and dates became *. Edit it if you like.</div>
+                </div>
+              </template>
+              <template x-if="exDialog.shape === 'custom'">
+                <div class="mt-2">
+                  <input autocomplete="off" x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm($event)"
+                         class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="kopia ignore pattern, e.g. /Users/*/Cache/**">
+                  <div class="kl-note mt-1">Written as-is to every ticked policy. A leading / starts from each backup's own folder.</div>
+                </div>
+              </template>
+            </div>
+
+            <!-- where the rule goes -->
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <div class="text-xs font-medium">Where the rule goes</div>
+                <span class="kl-seg ml-auto" style="height:22px">
+                  <span :class="exDialog.reach === 'smart' ? 'on' : ''" @click="exSetReach('smart')">Smart</span>
+                  <span :class="exDialog.reach === 'manual' ? 'on' : ''" @click="exSetReach('manual')">Choose myself</span>
+                </span>
+              </div>
+              <div class="kl-note mb-1" x-show="exDialog.loading">Reading policies…</div>
+              <div class="kl-callout mb-1" x-show="exDialog.targetData && exDialog.targetData.error" x-text="exDialog.targetData ? exDialog.targetData.error : ''"></div>
+              <div class="kl-note mb-1" x-show="!exDialog.loading && exDialog.targetData && !exTargets().length && !exDialog.targetData.error">No backup holds this path.</div>
+              <div class="space-y-1">
+                <template x-for="t in exTargets()" :key="t.target">
+                  <div class="rounded border px-2 py-1.5"
+                       :class="exDialog.ticked[t.target] ? 'border-fg bg-sel' : 'border-bd-soft'">
+                    <div class="flex items-start gap-2 cursor-pointer" @click="exToggleTarget(t)"
+                         :class="exPatternOf(t) ? '' : 'opacity-50 cursor-default'">
+                      <input autocomplete="off" type="checkbox" :checked="!!exDialog.ticked[t.target]" class="shrink-0 mt-0.5" tabindex="-1">
+                      <div class="min-w-0 grow">
+                        <div class="flex items-center gap-2">
+                          <span class="font-medium text-xs break-all" x-text="exLabel(t.target)"></span>
+                          <span class="pill ok shrink-0" x-show="t.smart">Smart pick</span>
+                          <span class="pill shrink-0" x-show="exPatternOf(t) && exDialog.shape !== 'custom' && exAlreadyOut(t)">already excluded</span>
+                        </div>
+                        <div class="kl-note" x-text="exWhy(t)"></div>
+                        <template x-for="pr in exPatternRows(t)" :key="pr.pattern">
+                          <div class="font-mono text-[0.6875rem] break-all" style="color:var(--muted)">
+                            <span x-text="pr.pattern"></span><span style="color:var(--muted);font-family:var(--font-sans)" x-show="pr.note" x-text="'  ' + pr.note"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                    <template x-if="t.role === 'child' && exDialog.ticked[t.target]">
+                      <div class="ml-6 mt-1.5 pt-1.5 border-t border-dashed border-bd space-y-1">
+                        <label class="flex items-start gap-2 text-xs cursor-pointer">
+                          <input autocomplete="off" type="checkbox" class="mt-0.5" :checked="exCopies(t)" @change="exToggleCopyDown(t)">
+                          <span>
+                            <span class="font-medium" x-text="'Keep the ' + exRuleWord((t.inherited_rules || []).length) + ' it gets from ' + exLabel(t.inherits_from || 'global')"></span>
+                            <span class="kl-note block">They're copied into this policy with the new rule. Later changes there won't reach it.</span>
+                          </span>
+                        </label>
+                        <div class="kl-callout" x-show="!exCopies(t)"
+                             x-text="exLabel(t.target) + ' stops using ' + exRuleWord((t.inherited_rules || []).length) + ' from ' + exLabel(t.inherits_from || 'global') + '. Files those rules leave out start being backed up again.'"></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <div class="kl-note mt-2 font-medium" style="color:var(--fg)" x-show="exCoverageText()" x-text="exCoverageText()"></div>
+            </div>
+
+            <!-- price -->
+            <div class="rounded border border-bd bg-surface2 p-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium">Leaves out</span>
+                <span class="text-xs" x-show="exDialog.pricing" style="color:var(--muted)">checking the index…</span>
+                <span class="text-xs font-medium" x-show="!exDialog.pricing && exKeepoutText()" x-text="exKeepoutText()"></span>
+                <span class="text-xs" style="color:var(--muted)"
+                      x-show="!exDialog.pricing && !exKeepoutText() && !exPriceNote()" x-text="exEmptyText()"></span>
+                <span class="grow"></span>
+                <button class="kl-btn quiet" style="height:22px" @click="exPriceAll()" :disabled="exDialog.pricing">Check again</button>
+              </div>
+              <div class="kl-note mt-1" x-show="!exDialog.pricing && exPriceNote()" x-text="exPriceNote()"></div>
+            </div>
+
+            <template x-if="exDialog.price && (exDialog.price.examples || []).length">
+              <div>
+                <div class="text-xs font-medium mb-1">Matched files</div>
+                <input autocomplete="off" x-model="exDialog.matchFilter" class="fld w-full border border-bd bg-surface2 text-xs mb-1" placeholder="Filter this list">
+                <div class="kl-list" style="max-height:260px">
+                  <template x-for="(m, i) in exMatches()" :key="i">
+                    <div class="li">
+                      <span class="font-mono break-all grow" x-text="m.path"></span>
+                      <span class="num shrink-0" style="color:var(--muted)" x-text="m.size != null ? fmtB(m.size) : ''"></span>
+                    </div>
+                  </template>
+                </div>
+                <div class="kl-listfoot" x-show="exPreviewCap()">
+                  <span x-text="exPreviewCap()"></span> ·
+                  <button class="underline" style="color:var(--link)" @click="exToSearch()">Open in Search</button>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="exDiffList().length">
+              <div class="kl-sec">
+                <div class="h">Changes</div>
+                <div class="space-y-2">
+                  <template x-for="df in exDiffList()" :key="df.label">
+                    <div>
+                      <div class="kl-callout" x-show="df.error" x-text="df.label + ': ' + df.error"></div>
+                      <template x-if="df.before !== null">{{ rulediff('df') }}</template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          </template>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note" x-show="!exAlreadyExcluded()">A policy backup is taken first.</span>
+            <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="exDialog.mode === 'exclude' && wmWhy('non_destructive')" x-text="wmWhy('non_destructive')"></span>
+            <button class="kl-btn" @click="exClose()">Cancel</button>
+            <button class="kl-btn primary" x-show="exDialog.mode === 'exclude'" @click="exConfirm($event)"
+                    :disabled="!exCanCommit() || !!wmOff('non_destructive')">Exclude… <span class="protag" x-show="exDialog && exSmartShape(exDialog.shape) && proTag('exclude_smart')" :title="proTagTitle()">PRO</span></button>
+            <button class="kl-btn primary" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()" @click="exConfirm($event)"
+                    :disabled="!exCanCommit()">Next: delete</button>
+            <button class="kl-btn danger" x-show="exAlreadyExcluded()" @click="exJustDelete()">Delete…</button>
+          </div>
+        </div>
+      </template>
+    </div>

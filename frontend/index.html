@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}" data-density="{{ density }}" data-font="{{ font }}" data-sortarrows="{{ sortarrows }}" data-fileicons="{{ fileicons }}"{% if density == "custom" %} style="--kl-density-pct:{{ density_pct }}"{% endif %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KopiaLens</title>
+  <script>window.KL_BASE = {{ base_json }};   // URL prefix (HA ingress, proxy sub-path); "" otherwise
+    window.KL_HA = {{ ha_json }};   // opened through Home Assistant, which signs its user in</script>
+  <link rel="icon" href="{{ base }}/static/favicon.svg" type="image/svg+xml">
+  <script>
+    // Resolve the Tailwind dark variant before first paint. data-theme is stamped by the
+    // server; only "system" needs the media query, so no flash on any path.
+    (function () {
+      var t = document.documentElement.dataset.theme;
+      var dark = t && t !== 'system'
+        ? ['ember', 'midnight', 'obsidian', 'lens', 'graphite', 'ink'].indexOf(t) >= 0
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', dark);
+    })();
+  </script>
+  <script defer src="{{ base }}/static/vendor/alpine-3.17.5.min.js"></script>
+  <link href="{{ base }}/static/vendor/tabulator-6.7.1.simple.min.css" rel="stylesheet">
+  <script src="{{ base }}/static/vendor/tabulator-6.7.1.min.js"></script>
+  <script src="{{ base }}/static/vendor/marked-18.1.1.min.js"></script>
+  <script src="{{ base }}/static/vendor/driver-1.10.2.min.js"></script>
+  <link href="{{ base }}/static/vendor/driver-1.10.2.min.css" rel="stylesheet">
+  <link href="{{ base }}/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="{{ base }}/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="{{ base }}/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
+  <!-- Built by packaging/build_css.py. Last on purpose: utilities override app.css. -->
+  <link href="{{ base }}/static/css/tailwind.css?v={{ asset_v }}" rel="stylesheet">
+</head>
+<body class="bg-canvas text-fg">
+  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col" :class="ob ? 'overflow-hidden' : ''">
+{% include "partials/nav.html" %}
+    <main class="min-w-0 flex-1 overflow-auto px-4 pb-4 pt-2 transition-opacity" :class="repoSwitching ? 'opacity-50' : ''" :aria-busy="repoSwitching ? 'true' : 'false'">
+      <!-- The sample data is open: say so, with the way to a real repository. -->
+      <div x-show="!ob && isSample()" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm">
+        <div class="min-w-0 flex-1">You're looking at sample data. Actions here change nothing.</div>
+        <button x-show="!window.KL_WEB_DEMO" @click="openAddRepo()" class="kl-btn primary">Connect your repository</button>
+      </div>
+      <!-- Setup was skipped or left for later: what's missing, and the way back to it. -->
+      <div x-show="!ob && setupSkipped" x-cloak class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-2 flex flex-wrap items-center gap-3 text-sm" data-testid="setup-banner">
+        <div class="min-w-0 flex-1" x-text="noRepos ? 'Setup isn\'t finished: no repository is connected.' : 'Setup isn\'t finished.'"></div>
+        <button @click="obResume()" class="kl-btn primary">Finish setup</button>
+        <button x-show="!noRepos" @click="obDismissSetup()" class="kl-btn quiet">Dismiss</button>
+      </div>
+
+      <div x-show="noRepos" x-cloak class="rounded-md border border-dashed border-bd bg-surface px-4 py-10 text-center text-muted" data-testid="no-repos">
+        <div>No repositories yet.</div>
+        <button type="button" @click="openAddRepo()" class="mt-1 text-fg underline underline-offset-2">Connect a repository</button>
+      </div>
+      <!-- A config file was damaged and restored (or reset) at startup: say so until dismissed. -->
+      <template x-for="n in cfgNotices" :key="n.id">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="cfgNoticeText(n)"></div>
+            <div class="text-xs text-muted" x-show="n.kept_as" x-text="'The damaged file was kept as ' + n.kept_as + '.'"></div>
+          </div>
+          <button @click="cfgOpenBackups()" class="kl-btn">Open Config Backups</button>
+          <button @click="cfgDismiss(n)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
+      <template x-if="apNewest()">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="approvals-waiting">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="'API token &quot;' + apNewest().token_name + '&quot; asks to: ' + apNewest().label"></div>
+            <div class="text-xs text-muted" x-text="apNoticeLine(apNewest())"></div>
+          </div>
+          <button @click="apStart(apNewest())" class="kl-btn" :aria-label="'Review and approve ' + apNewest().label">Approve…</button>
+          <button @click="apDecide(apNewest(), false)" :disabled="apBusy" class="kl-btn quiet" :aria-label="'Deny ' + apNewest().label">Deny</button>
+          <template x-if="apWaiting > 1">
+            <button @click="apOpen()" class="kl-btn quiet" x-text="(apWaiting - 1) + ' more waiting · Review all'"></button>
+          </template>
+        </div>
+      </template>
+      <!-- kopia couldn't list a repository's snapshots: name it once, with kopia's own reason. -->
+      <template x-for="n in listingNotices" :key="n.repo">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="listing-failed-notice">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="'Couldn’t list the snapshots in ' + n.name"></div>
+            <div class="text-xs text-muted break-words" x-text="n.reason"></div>
+          </div>
+          <button @click="openRepoAdmin()" class="kl-btn">Repository settings</button>
+          <button @click="listingNotices = listingNotices.filter((x) => x.repo !== n.repo)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
+      <template x-for="n in ixNotices" :key="n.id">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="index-recovered-notice">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="ixNoticeText(n)"></div>
+            <div class="text-xs text-muted">The next index brings it up to date.</div>
+          </div>
+          <button @click="ixDismiss(n)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
+      <!-- A repository with no index yet: say so once, with the way to start, instead of blank pages. -->
+      <div x-show="repoKind !== 'backblaze' && indexStatus && indexStatus.never_indexed" x-cloak
+           class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+        <div class="min-w-0 flex-1">
+          <div class="font-medium" x-text="notIndexedTitle()"></div>
+          <div class="text-xs text-muted" x-text="notIndexedNote()"></div>
+        </div>
+        <button x-show="!indexStatus.building" @click="buildIndex()" class="kl-btn primary">Start indexing</button>
+        <button x-show="indexStatus.building" @click="openIndexPanel()" class="kl-btn">Show progress</button>
+      </div>
+      <!-- KopiaLens runs this repository's backups but can't right now: another app took over, or an error.
+           Not while KopiaUI hands over after a move (the Backups button says so). -->
+      <template x-if="repoKind !== 'backblaze' && engineFor() && engineFor().choice === 'kopialens' && ['blocked', 'failed'].includes(engineFor().state) && !engineFor().until_restart">
+        <div class="mb-4 rounded-md border border-danger bg-danger-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="engine-banner">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="engineFor().state === 'blocked' ? engineFor().conflict + ' KopiaLens stopped its own backups here.' : 'KopiaLens stopped running backups for this repository.'"></div>
+            <div class="text-xs text-muted break-all" x-text="engineFor().state === 'blocked' ? 'Close the other app, or hand the backups back to it.' : (engineFor().error || '') + (engineFor().retry_at ? ' Trying again ' + freshTime(engineFor().retry_at) + '.' : '')"></div>
+          </div>
+          <button @click="openEngineDlg()" class="kl-btn">Who runs backups…</button>
+        </div>
+      </template>
+      <!-- Reached through a kopia server: say once what works, and where the full analysis lives. -->
+      <div x-show="repoKind === 'server'" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-3 text-sm">
+        <div class="font-medium">Browse-only: this repository is reached through a kopia server</div>
+        <div class="text-xs text-muted">Snapshots, folders, restore, pins and policies work here. You see the snapshots your server account may see. Space analysis, dedup and cleanup need direct access to the storage: run KopiaLens on the computer that runs the kopia server, or connect to the storage itself.</div>
+      </div>
+      <div x-show="!noRepos" class="contents">
+{% include "partials/tabs/dashboard.html" %}
+
+{% include "partials/tabs/snapshots.html" %}
+
+{% include "partials/tabs/tree.html" %}
+
+{% include "partials/tabs/search.html" %}
+
+{% include "partials/tabs/churn.html" %}
+
+{% include "partials/tabs/simulate.html" %}
+
+{% include "partials/tabs/stats.html" %}
+
+{% include "partials/tabs/logs.html" %}
+
+{% include "partials/tabs/excluded.html" %}
+
+{% include "partials/tabs/policies.html" %}
+
+{% include "partials/tabs/tasks.html" %}
+
+{% include "partials/backblaze.html" %}
+      </div>
+    </main>
+{% include "partials/settings.html" %}
+{% include "partials/detail.html" %}
+{% include "partials/exclude.html" %}
+{% include "partials/delete.html" %}
+{% include "partials/prune.html" %}
+{% include "partials/modals.html" %}
+{% include "partials/browse.html" %}
+{% include "partials/repodialogs.html" %}
+{% include "partials/engine.html" %}
+{% include "partials/sourceops.html" %}
+{% include "partials/onboarding.html" %}
+{% include "partials/lock.html" %}
+{% include "partials/cfgdialog.html" %}
+{% include "partials/approval.html" %}
+{% include "partials/confirm.html" %}
+{% include "partials/jobs.html" %}
+{% include "partials/maintenance.html" %}
+{% include "partials/toast.html" %}
+{% include "partials/pronotice.html" %}
+{% include "partials/indexpanel.html" %}
+{% include "partials/help.html" %}
+{% include "partials/fulllist.html" %}
+{% include "partials/tablelayout.html" %}
+{% include "partials/docs.html" %}
+  </div>
+  <script>window.KL_OS_FORMATS = {{ os_formats }};</script>
+  <script src="{{ base }}/static/js/fileicons-material.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/util.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tables.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/terms.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/pwreveal.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/toast.js?v={{ asset_v }}"></script>
+<script src="{{ base }}/static/js/zoom.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/indexpanel.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/index.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/dashboard.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/search.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/tree.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/excluded.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/exclusions.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/churn.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/health.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/dashboard.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/snapshots.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/browse.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tree.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/search.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/churn.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/simulate.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/stats.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/logs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/excluded.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/actions.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/confirm.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/runbar.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/settings.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/account.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/appconfig.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/repos.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/onboarding.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/theme.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/detail.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/exclude.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/deletepanel.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/prune.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/diffview.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/jobs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/maintenance.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/help.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/policyedit.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/policies.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/licence.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tasks.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/engine.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/sourceops.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/notify.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/writemode.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tokens.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/fulllist.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/docs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/app.js?v={{ asset_v }}"></script>
+</body>
+</html>

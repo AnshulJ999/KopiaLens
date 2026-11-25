@@ -1,0 +1,93 @@
+
+            <section x-show="settingsTab==='licence'" x-effect="settingsTab==='licence' && showSettings && refreshLicence()" class="space-y-4" data-testid="settings-licence">
+              <div class="flex items-center gap-2">
+                <span class="font-medium">Licence</span>
+                <span class="pill" :class="licPillClass()" x-text="licPillText()"></span>
+              </div>
+
+              <div x-show="lic.demo" class="text-sm">Demo: every Pro feature is unlocked to try.</div>
+
+              <template x-if="lic.state === 'none'">
+                <div class="rounded-md border border-bd bg-surface2 px-3 py-2 text-xs text-muted">
+                  Everything you can see is free. Pro adds removing files from snapshots, deleting the snapshots that hold a file, smart exclude rules and exclude &amp; delete.
+                  <button class="text-link underline" @click="proSeePlans()">See plans</button>
+                </div>
+              </template>
+
+              <div x-show="licProblem()" class="kl-callout" x-text="licProblem()"></div>
+
+              <template x-if="lic.state !== 'none'">
+                <div class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-sm">
+                  <span class="text-muted">Plan</span><span x-text="lic.plan"></span>
+                  <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email && lic.email !== lic.name ? ' · ' + lic.email : '')"></span>
+                  <template x-if="lic.source !== 'patreon' || !lic.renewable">
+                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
+                  </template>
+                  <template x-if="lic.source === 'patreon' && lic.renewable">
+                    <span class="contents"><span class="text-muted">Renews</span><span>Automatically while you're a patron</span></span>
+                  </template>
+                </div>
+              </template>
+
+              <template x-if="(lic.others || []).length">
+                <div>
+                  <div class="text-xs font-medium mb-1">Also on this computer</div>
+                  <ul class="space-y-1">
+                    <template x-for="o in lic.others" :key="o.id">
+                      <li class="flex items-center gap-2 text-sm">
+                        <span class="flex-1 min-w-0 truncate" x-text="licOtherText(o)" :title="licOtherText(o)"></span>
+                        <button class="kl-btn quiet" @click="licRemoveOther(o)" :disabled="licBusy">Remove…</button>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+
+              <template x-if="licProgress()">
+                <div>
+                  <div class="flex justify-between text-sm"><span>Lifetime licence</span><span class="text-muted" x-text="licProgress().text"></span></div>
+                  <div class="h-1.5 rounded bg-sel overflow-hidden mt-1" role="progressbar" :aria-valuenow="licProgress().pct" aria-valuemax="100" aria-label="Towards a lifetime licence">
+                    <div class="h-full bg-accent-solid" :style="`width:${licProgress().pct}%`"></div>
+                  </div>
+                  <div class="text-[0.6875rem] text-muted mt-1">At $60 of support you get Pro for life.</div>
+                </div>
+              </template>
+
+              <template x-if="lic.state !== 'active' || licAdding">
+                <div class="space-y-3">
+                  <div>
+                    <label for="kl-lic-key" class="block text-xs font-medium mb-1" x-text="lic.state === 'none' ? 'Licence key' : lic.state === 'active' ? 'Another licence key' : 'New licence key'"></label>
+                    <div class="flex gap-2">
+                      <input id="kl-lic-key" x-model="licKey" @keydown.enter="licActivate()" class="fld border border-bd bg-surface flex-1 min-w-0 font-mono" placeholder="Paste your licence key or licence" autocomplete="off" spellcheck="false">
+                      <button class="kl-btn primary" @click="licActivate()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Activating…' : 'Activate'"></button>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[0.6875rem] uppercase tracking-wide text-faint">or</span>
+                    <button class="kl-btn" @click="licPickFile()" :disabled="licBusy">Import licence file…</button>
+                    <input id="kl-lic-file" type="file" accept=".license,.key,.txt" class="hidden" @change="licImportFile($event)">
+                    <button class="kl-btn patreon" @click="licPatreon()" :disabled="licBusy" x-show="!licPatreonWaiting">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.957 7.21c-.004-3.064-2.391-5.576-5.191-6.482-3.478-1.125-8.064-.962-11.384.604C2.357 3.231 1.093 7.391 1.046 11.54c-.039 3.411.302 12.396 5.369 12.46 3.765.047 4.326-4.804 6.068-7.141 1.24-1.662 2.836-2.132 4.801-2.618 3.376-.836 5.678-3.501 5.673-7.031Z"/></svg>
+                      Sign in with Patreon</button>
+                    <span x-show="licPatreonWaiting" class="text-xs text-muted">Finish signing in in your browser…</span>
+                    <button x-show="licPatreonWaiting" class="kl-btn quiet" @click="licPatreonCancel()">Cancel</button>
+                  </div>
+                  <div class="text-[0.6875rem] text-muted">No internet on this computer? On another device, open <span class="font-mono select-all" x-text="lic.offline_url"></span>, enter your key, then import the file here.</div>
+                </div>
+              </template>
+
+              <div x-show="lic.renew_error && !licError" class="kl-callout" x-text="lic.renew_error"></div>
+              <p x-show="lic.pending_release" class="kl-note" data-testid="licence-pending-release">A removed licence still counts this computer. KopiaLens frees it the next time it reaches the licence service.</p>
+              <div x-show="licError" class="kl-callout" x-text="licError"></div>
+
+              <template x-if="lic.state !== 'none'">
+                <div class="flex flex-wrap items-center gap-2">
+                  <button x-show="lic.renew_due" class="kl-btn" @click="licRenew()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Renewing…' : 'Renew now'"></button>
+                  <button x-show="lic.state === 'active' && !licAdding" class="kl-btn quiet" @click="licAdding = true">Add another licence…</button>
+                  <button x-show="lic.state === 'active' && licAdding" class="kl-btn quiet" @click="licAdding = false; licError = ''">Cancel</button>
+                  <button x-show="lic.stored" class="kl-btn quiet" @click="licRemove()" :disabled="licBusy">Remove licence…</button>
+                  <div x-show="!lic.stored" class="text-[0.6875rem] text-muted" x-text="licOriginText()"></div>
+                </div>
+              </template>
+              <div x-show="lic.state !== 'none' && lic.check_host" class="text-[0.6875rem] text-muted" x-text="licCheckText()"></div>
+            </section>

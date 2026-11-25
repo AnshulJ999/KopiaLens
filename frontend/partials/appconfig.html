@@ -1,0 +1,96 @@
+
+            <!-- Settings: settings backups + export/import, and About (appconfig.js). -->
+            <section x-show="settingsTab==='backups'" class="space-y-5">
+              <div>
+                <div class="flex items-center justify-between gap-3">
+                  <span>Backups of these settings</span>
+                  <button @click="cfgBackUpNow()" :disabled="cfgBusy==='backup'" class="kl-btn" x-text="cfgBusy==='backup' ? 'Backing up…' : 'Back up now'"></button>
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">Your settings, repository list, sign-in accounts and encryption key files. Copies are made before changes, weekly and before upgrades. Your kopia backups aren't touched.</p>
+              </div>
+              <p x-show="!cfg && !cfgError" class="kl-note">Loading…</p>
+              <div x-show="!cfg && cfgError" class="kl-callout flex items-center gap-3"><span>Couldn't load the backups.</span><button class="kl-btn quiet" @click="loadCfg()">Try again</button></div>
+              <p x-show="cfg && !cfg.backups.length" class="text-xs text-muted">No backups yet. The first one is made before your next change.</p>
+              <div x-show="cfg && cfg.backups.length" class="rounded border border-bd divide-y divide-bd-soft max-h-72 overflow-y-auto">
+                <template x-for="b in (cfg ? cfg.backups : [])" :key="b.id">
+                  <div class="flex items-center gap-3 px-3 py-2 text-xs">
+                    <div class="min-w-0 flex-1">
+                      <div><span x-text="fmtAbs(b.at)"></span> <span class="text-muted" x-text="'· ' + cfgKind(b)"></span></div>
+                      <div class="text-muted truncate" :title="b.files.join(', ')"
+                           x-text="cfgGroupsLabel(b.groups) + ' · ' + fmtBytes(b.size) + (b.app_version ? ' · KopiaLens ' + b.app_version : '')"></div>
+                    </div>
+                    <button @click="cfgOpenRestore(b)" class="kl-btn">Restore…</button>
+                  </div>
+                </template>
+              </div>
+
+              <div class="border-t border-bd pt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span>Export to a file</span>
+                  <a :href="cfgExportUrl()" class="kl-btn" download>Download export</a>
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">Settings and repository list, for moving to another computer or keeping a copy off this disk.</p>
+                <label class="flex items-center gap-2 text-xs mt-2"><input autocomplete="off" type="checkbox" x-model="cfgExportAccounts">Include sign-in accounts</label>
+                <label class="flex items-center gap-2 text-xs mt-1"><input autocomplete="off" type="checkbox" x-model="cfgExportKeys">Include encryption key files</label>
+                <p x-show="cfgExportAccounts || cfgExportKeys" class="text-[0.6875rem] mt-1" style="color:var(--warn)">The file then holds password hashes or your locked encryption key. Keep it somewhere private.</p>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-3">
+                  <span>Import from a file</span>
+                  <button @click="cfgPickImport()" :disabled="cfgBusy==='import'" class="kl-btn" x-text="cfgBusy==='import' ? 'Reading…' : 'Import…'"></button>
+                  <input type="file" accept=".zip,application/zip" class="hidden" x-ref="cfgImportFile" @change="cfgImportFile($event)">
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">You see what would change before anything is replaced.</p>
+              </div>
+
+              <div class="border-t border-bd pt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span>Reset all settings</span>
+                  <button @click="klResetAll()" :disabled="!klAllChanged().length" class="kl-btn" data-testid="settings-reset-all"
+                          :title="klAllChanged().length ? '' : 'Every setting is at its default'">Reset all…</button>
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">Puts every changed setting back to its default, after a backup. Sign-in, encryption, remote access, repositories, ports, update checks and usage stats stay as they are.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='about'" class="space-y-3">
+              <p x-show="!about" class="kl-note">Loading…</p>
+              <template x-if="about">
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between gap-3"><span>KopiaLens</span><span class="text-xs" :title="about.commit ? 'Built from ' + about.commit : null" x-text="about.version + (about.commit ? ' (' + about.commit + ')' : '')"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>kopia</span>
+                    <span class="text-xs text-right min-w-0 truncate" :title="about.kopia.path" x-text="about.kopia.available ? (about.kopia.version || 'version unknown') : 'not found'"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>Running as</span><span class="text-xs" x-text="about.profile === 'desktop' ? 'Desktop app' : 'Server'"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>Data folder</span><span class="text-xs text-right min-w-0 truncate" :title="about.data_dir" x-text="about.data_dir"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>Data format</span><span class="text-xs" x-text="about.data_format"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>System</span><span class="text-xs" x-text="about.os + ' · Python ' + about.python"></span></div>
+                  <div x-show="about.certificates" class="flex items-center justify-between gap-3"><span>HTTPS certificates</span><span class="text-xs text-right min-w-0 truncate" :title="about.certificates" x-text="about.certificates"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>Updates</span>
+                    <span class="flex items-center gap-2 text-xs">
+                      <span x-text="update().available ? update().latest + ' is out' : (update().checked_at ? 'Up to date' : 'Not checked yet')"></span>
+                      <button class="kl-btn" @click="update().available ? (showUpdate = true) : checkUpdatesNow()" :disabled="checkingUpdates"
+                              x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
+                  <div x-show="about.notices" class="flex items-center justify-between gap-3"><span>Third-party notices</span>
+                    <a class="kl-btn" :href="appUrl('/api/app/notices')" download>Download</a></div>
+                  <div x-show="help && help.links && help.links.support" class="flex items-start justify-between gap-3" data-testid="about-support">
+                    <span class="shrink-0">Support KopiaLens</span>
+                    <div class="min-w-0 flex flex-col items-end gap-1">
+                      <div class="flex flex-wrap justify-end gap-1.5">
+                        <template x-for="l in (help && help.links && help.links.support) || []" :key="l.url">
+                          <a class="kl-btn" :href="l.url" target="_blank" rel="noopener">
+                            <i class="ic" :class="'ic-' + l.icon"></i><span x-text="l.label"></span><span x-show="l.note" class="text-muted" x-text="'· ' + l.note"></span></a>
+                        </template>
+                      </div>
+                      <span x-show="designIs('supportcopy', 'a', 'none')" class="text-[0.6875rem] text-muted">If you'd like to give more than a licence.</span>
+                      <span x-show="designIs('supportcopy', 'b', 'none')" class="text-[0.6875rem] text-muted">Built by a solo indie dev. Thanks for helping it grow.</span>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between gap-3"><span>For bug reports</span>
+                    <span class="flex items-center gap-2">
+                      <button @click="copyAbout()" class="kl-btn">Copy details</button>
+                      <button @click="openDiagnostics(false)" class="kl-btn">Create diagnostics bundle…</button></span></div>
+                  <p class="text-[0.6875rem] text-muted pt-2">Built on Kopia, by Jarek Kowalski and contributors. Not affiliated with or endorsed by the Kopia project.</p>
+                </div>
+              </template>
+            </section>
