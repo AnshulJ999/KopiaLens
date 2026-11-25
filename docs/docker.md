@@ -25,7 +25,7 @@ KopiaLens runs as a single container with kopia built in. You open it in a brows
          # Required: settings, the index and kopia's cache. Without it everything is lost on recreate.
          # Use a full path and create the folder first (Synology: /volume1/docker/kopialens, Unraid: /mnt/user/appdata/kopialens).
          - /opt/kopialens:/config
-         # Your repository, at the same path kopia uses for it.
+         # Mount your Kopia repository (if it's a local folder or network share) here so KopiaLens can see it.
          - /mnt/backups/kopia:/mnt/backups/kopia
          # Optional: backed-up folders, at the same paths as in your snapshots, so the Excluded
          # browser can compare the disk with your backups. Read-only is enough.
@@ -49,7 +49,9 @@ KopiaLens serves HTTPS with a certificate it makes itself, so the browser warns 
 
 The first run shows setup: connect your repositories, choose a password, and start the first index (see [First-time setup](getting-started.md)). For the first 30 minutes after a start, setup is open to anyone who can reach the port. After that it asks for a **setup code**, printed in the container log (`docker logs kopialens`).
 
-A new container has no kopia connections yet, so setup shows **No kopia repositories found on this computer** at first. For a folder repository, choose **Connect to an existing one**, then **Local folder**, and pick the repository's path inside the container (the right-hand side of its `volumes` line). If that folder isn't there, the running container was started without that line: `docker inspect kopialens --format '{{json .Mounts}}'` shows what it has.
+A new container has no kopia connections yet. Setup looks for folder repositories in the folders attached to the container, up to 3 folders deep, and lists each one under **Found on this computer**. Select **Connect…** next to it and enter the repository password.
+
+If setup finds nothing, choose **Connect to an existing one**, then **Local folder**, and pick the repository's path inside the container. If that folder isn't there, the running container may have been started without its `volumes` line: `docker inspect kopialens --format '{{json .Mounts}}'` shows what it has.
 
 The image is on Docker Hub as `anshulj99/kopialens` and on GitHub as `ghcr.io/anshulj999/kopialens`, for amd64 and arm64. `latest` is the newest release; a version tag such as `1.0.0` stays on that release.
 
@@ -76,7 +78,10 @@ The image is on Docker Hub as `anshulj99/kopialens` and on GitHub as `ghcr.io/an
 
 On hosts with SELinux (Fedora, RHEL, Rocky), add `:z` to the `/config` line (`/opt/kopialens:/config:z`) if KopiaLens can't write there.
 
-**Use the same paths as on the host.** kopia records each folder by the path it was backed up from. Mount your repository and your backed-up folders at the same paths inside the container (for example `/home:/home:ro`), so KopiaLens finds them where your snapshots say they are.
+**Paths inside the container.** Each `volumes` line is a folder on the host, a colon, and the path where KopiaLens sees that folder inside the container.
+
+- **Backed-up folders need the same path on both sides.** kopia records each folder by the path it was backed up from. Mount it at that path (for example `/home:/home:ro`), so KopiaLens finds it where your snapshots say it is.
+- **The repository can use any path inside the container.** The same path as on the host is simplest. Setup finds the repository either way.
 
 Cloud repositories (S3, B2, SFTP and the rest) need no folder: connect them in setup.
 
