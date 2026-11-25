@@ -387,7 +387,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write   # the draft release in this repository
+      contents: read
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
@@ -450,7 +450,8 @@ jobs:
       - name: Draft release
         if: inputs.publish == 'draft'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The maintainer's token, so the release carries their name rather than the Actions bot's.
+          GH_TOKEN: ${{ secrets.KOPIALENS_RELEASE_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
           cd "$KOPIALENS_RELEASE_DIR"
