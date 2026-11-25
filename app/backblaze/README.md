@@ -1,6 +1,6 @@
 # KopiaLens Backblaze engine
 
-This folder is the part of [KopiaLens](https://kopialens.com) that reads Backblaze Personal Backup (Computer Backup). It's published so anyone can read exactly what KopiaLens does with Backblaze's files.
+This folder is the part of [KopiaLens](https://kopialens.com) that reads Backblaze Personal Backup (Computer Backup).
 
 KopiaLens is not affiliated with Backblaze.
 
@@ -43,16 +43,14 @@ All inside Backblaze's data folder (`C:\ProgramData\Backblaze\bzdata` on Windows
 | `worker.py`, `bz_verify.py` | The background worker, and a check against Backblaze's own counts |
 | `tests/` | The tests |
 
-`app/core/textmatch.py` (search matching) and `app/core/atomicfile.py` (safe file writes) are published with it.
-
-The code published here is for auditing only right now. It can't be run on its own without the rest of KopiaLens.
+It also uses `app/core/textmatch.py` (search matching) and `app/core/atomicfile.py` (safe file writes), and runs as part of KopiaLens rather than on its own.
 
 ## Licence
 
 Copyright (C) 2026 Anshul Jain.
 
-GNU Affero General Public License v3.0 (`LICENSE`), for the files in this folder and the two files above.
+GNU Affero General Public License v3.0 (`LICENSE`)
 
 ## Contributing
 
-Bug reports and questions are welcome in the [KopiaLens issues](https://github.com/AnshulJ999/KopiaLens/issues). Pull requests aren't open yet.
+Bug reports and questions are welcome in the [KopiaLens issues](https://github.com/AnshulJ999/KopiaLens/issues). For code changes, see `CONTRIBUTING.md` at the root of the repository.

@@ -25,7 +25,7 @@ def _load(rel: str):
 
 
 def test_the_app_and_the_release_report_one_version(monkeypatch):
-    """appversion is the one version (release tag > newest kopialens/v* tag > VERSION); release.py
+    """appversion is the one version (release tag > newest version tag > VERSION); release.py
     stamps it into the Tauri build, so Cargo.toml and tauri.conf.json are not kept in step by hand."""
     release = _load("packaging/release.py")
     # Same conditions as config's import (a build-as-version setting included), so a local build of

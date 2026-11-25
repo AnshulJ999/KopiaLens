@@ -33,7 +33,7 @@ WORK = os.path.join(installer_test.BUILD_ROOT, "update-test")
 SCRIPT = "update_test_sandbox.ps1"
 SERVER = "update_test_server.ps1"
 
-# The test bed's installed copy (devtools/testbed/README.md).
+# The test bed's installed copy.
 HERE_EXE = r"C:\Program Files\KopiaLens\KopiaLens.exe"
 HERE_DATA = os.path.join(os.environ.get("LOCALAPPDATA", ""), "KopiaLens")
 HERE_URL = "http://127.0.0.1:7128"

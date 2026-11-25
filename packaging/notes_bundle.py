@@ -1,6 +1,8 @@
 """Stage the Notes widget (Settings > Experimental) for a build: release.py and build_server.py do
 it themselves; the Docker build needs it staged into packaging/docker/devnotes first (its build
-context has no widget sources), and a WSL source run stages it for itself.
+context has no widget sources), and a WSL source run stages it for itself. The widget's sources
+live outside this repository: without them build_server.py builds without Notes, while release.py
+requires them.
 
     python packaging/notes_bundle.py <folder> [--testing]
 
@@ -26,9 +28,17 @@ MARKER = "BUNDLE.txt"     # app/core/devnotes.py serves the folder only when thi
 TESTING = "TESTING.txt"   # config.TESTING_BUILD
 
 
+def _sources() -> list[str]:
+    return [*FILES.values(), *(os.path.join(WIDGET, "notes_server", f) for f in STORE)]
+
+
+def available() -> bool:
+    """True when the widget's sources are present."""
+    return all(os.path.isfile(p) for p in _sources())
+
+
 def stage(dest: str, testing: bool = False) -> str:
-    sources = [*FILES.values(), *(os.path.join(WIDGET, "notes_server", f) for f in STORE)]
-    missing = [p for p in sources if not os.path.isfile(p)]
+    missing = [p for p in _sources() if not os.path.isfile(p)]
     if missing:
         raise SystemExit("Notes widget files not found (is Widgets/notes checked out?):\n  " + "\n  ".join(missing))
     web, store = os.path.join(dest, "web"), os.path.join(dest, "py", "notes_server")

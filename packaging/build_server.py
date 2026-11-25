@@ -59,13 +59,19 @@ def pin_mismatches() -> list[str]:
     return out
 
 
-def notes_folder() -> str:
-    """The Notes widget (Settings > Experimental) ships in every build: a folder staged by
-    notes_bundle.py (KOPIALENS_BUILD_NOTES; the Docker build stages it first), else staged here."""
+def notes_folder() -> str | None:
+    """The Notes widget (Settings > Experimental): a folder staged by notes_bundle.py
+    (KOPIALENS_BUILD_NOTES; the Docker build stages it first), else staged here. Its sources live
+    outside this repository, so without them the build leaves Notes out."""
     sys.path.insert(0, os.path.join(KL_ROOT, "packaging"))
     import notes_bundle
     folder = os.environ.get("KOPIALENS_BUILD_NOTES", "").strip()
+    if folder and not os.path.exists(folder):
+        folder = ""   # the Docker build's default folder when nothing was staged
     if not folder:
+        if not notes_bundle.available():
+            print("Notes widget sources not found: building without Notes (Settings > Experimental).")
+            return None
         folder = notes_bundle.stage(os.path.join(OUT_DIR, "devnotes-stage"),
                                     testing=bool(os.environ.get("KOPIALENS_BUILD_TESTING")))
     if not notes_bundle.is_staged(folder):
@@ -99,7 +105,7 @@ def notes_args(folder: str) -> list[str]:
     return [f"--include-data-dir={os.path.join(folder, 'web')}=devnotes", "--include-package=notes_server"]
 
 
-def nuitka_args(notes: str) -> list[str]:
+def nuitka_args(notes: str | None) -> list[str]:
     # Windows file details take numbers only: a beta (1.2.0-beta.1) is stamped 1.2.0 there.
     numeric = app_version().split("+")[0].split("-")[0]
     # Opt-in: Nuitka's own tool downloads (Dependency Walker; one-time, cached per user).
@@ -128,7 +134,7 @@ def nuitka_args(notes: str) -> list[str]:
         *([f"--include-data-files={COMMIT_FILE}=COMMIT"] if appversion.commit() else []),
         f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",
         *[f"--include-module={m}" for m in upgrade_step_modules()],
-        *notes_args(notes),
+        *(notes_args(notes) if notes else []),
         # Our own test packages only - a *.tests wildcard also drops jinja2.tests, which jinja2 needs.
         "--nofollow-import-to=app.tests",
         "--nofollow-import-to=app.backblaze.tests",
@@ -155,7 +161,7 @@ def main() -> int:
     notes = notes_folder()
     # notes_server is compiled in from the staged folder.
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(
-        p for p in (os.path.join(notes, "py"), os.environ.get("PYTHONPATH", "")) if p)}
+        p for p in (os.path.join(notes, "py") if notes else "", os.environ.get("PYTHONPATH", "")) if p)}
     args = nuitka_args(notes)
     log_path = os.path.join(OUT_DIR, "build.log")
     started = time.time()

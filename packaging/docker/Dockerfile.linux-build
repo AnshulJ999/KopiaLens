@@ -1,6 +1,6 @@
-# The Linux x64 release build on the PC (packaging/release_all.py), with the same base and tools as the
+# The Linux x64 release build on the maintainer's PC, with the same base and tools as the
 # GitHub job: Ubuntu 22.04 for the oldest supported glibc, the same Python build, Tauri CLI and Nuitka.
-# No source goes in the image; release_all.py pipes a clean export of the commit into the container.
+# No source goes in the image; the release script pipes a clean export of the commit into the container.
 FROM ubuntu:22.04
 
 ARG PYTHON_VERSION=3.13.18

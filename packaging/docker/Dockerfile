@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # KopiaLens release image: the server compiled with Nuitka, plus a pinned kopia. No Python source ships.
 # Build (from the KopiaLens folder). The Notes widget (Settings > Experimental) lives outside this
-# folder, so stage it first (add --testing for a testing image: Experimental and Notes start on):
+# repository; to include it, stage it first (add --testing for a testing image: Experimental and
+# Notes start on). Without it the image is built without Notes:
 #   python packaging/notes_bundle.py packaging/docker/devnotes
 #   docker build -f packaging/docker/Dockerfile -t kopialens:local .
 ARG PYTHON_VERSION=3.14

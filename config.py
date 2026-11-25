@@ -23,7 +23,7 @@ APP_COMMIT = appversion.commit()
 TESTING_BUILD = os.path.isfile(os.path.join(HERE, "devnotes", "TESTING.txt"))
 API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VERSION
 
-# Online addresses baked into every shipped copy. Final values before the first public build.
+# Online addresses baked into every shipped copy; each can be overridden by its environment variable.
 LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licence.kopialens.com"
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
 # Daily update check + usage stats (docs/usage-stats.md).
@@ -34,7 +34,7 @@ DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"
 REPO_URL = os.environ.get("KOPIALENS_REPO_URL") or "https://github.com/AnshulJ999/KopiaLens"
 SUPPORT_EMAIL = os.environ.get("KOPIALENS_SUPPORT_EMAIL") or "support@kopialens.com"
 DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or "https://discord.gg/22EU4cqEf6"
-# Settings > About: ways to support development (same links as SyncLyrics).
+# Settings > About: ways to support development.
 SUPPORT_LINKS = [
     {"label": "GitHub Sponsors", "url": "https://github.com/sponsors/AnshulJ999", "icon": "github"},
     {"label": "Patreon", "url": "https://www.patreon.com/AnshulJain", "icon": "patreon"},

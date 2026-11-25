@@ -1,8 +1,8 @@
 """The KopiaLens version and build commit, from one place.
 
-Version: KOPIALENS_RELEASE_VERSION (a release build's tag) > the highest kopialens/v* git tag on the
-current branch (a source checkout) > the VERSION file, which builds write and installed copies, Docker
-and the web demo read.
+Version: KOPIALENS_RELEASE_VERSION (a release build's tag) > the highest version tag on the current
+branch of a source checkout (kopialens/v* in the private repository, plain v* in the public one) >
+the VERSION file, which builds write and installed copies, Docker and the web demo read.
 Commit: KOPIALENS_COMMIT (builds) > the COMMIT file a build ships > git's HEAD (a source checkout).
 Git's own files are read directly; git is run only to list the tags on the current branch, and without
 git every tag counts.
@@ -14,7 +14,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMPILED = "__compiled__" in globals()
-TAG_PREFIX = "kopialens/"
+TAG_PREFIXES = ("kopialens/", "")   # the private repository's tags first, then the public repository's
+TAG_PREFIX = TAG_PREFIXES[0]
 # A pre-release part must be alpha/beta/rc: older tags carry descriptions ("v0.41-before-UI-refactor")
 # whose numbers are not versions in this order.
 _SEMVER = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?(-(?:alpha|beta|rc)(?:\.\d+)*)?$")
@@ -87,11 +88,11 @@ def _refs(common: str, prefix: str) -> dict[str, str]:
     return out
 
 
-def _merged_tags() -> list[str] | None:
-    """kopialens/ tags reachable from HEAD (so a release branch ignores newer tags on main); None
-    when git can't answer."""
+def _merged_tags(prefix: str) -> list[str] | None:
+    """Tags under ``prefix`` reachable from HEAD (so a release branch ignores newer tags on main);
+    None when git can't answer."""
     try:
-        out = subprocess.run(["git", "-C", HERE, "tag", "--merged", "HEAD", "--list", TAG_PREFIX + "v*"],
+        out = subprocess.run(["git", "-C", HERE, "tag", "--merged", "HEAD", "--list", prefix + "v*"],
                              capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
     except (OSError, subprocess.SubprocessError):
@@ -100,15 +101,18 @@ def _merged_tags() -> list[str] | None:
 
 
 def tag_version() -> str | None:
-    """The highest kopialens/v* tag on the current branch of a source checkout, or None."""
+    """The highest version tag on the current branch of a source checkout, or None."""
     dirs = _git_dirs()
     if not dirs:
         return None
-    names = _merged_tags()
-    if names is None:
-        names = list(_refs(dirs[1], "refs/tags/" + TAG_PREFIX))
-    found = [v for v in (normalize(n) for n in names) if v]
-    return max(found, key=order_key) if found else None
+    for prefix in TAG_PREFIXES:
+        names = _merged_tags(prefix)
+        if names is None:
+            names = list(_refs(dirs[1], "refs/tags/" + prefix))
+        found = [v for v in (normalize(n) for n in names) if v]
+        if found:
+            return max(found, key=order_key)
+    return None
 
 
 def version() -> str:

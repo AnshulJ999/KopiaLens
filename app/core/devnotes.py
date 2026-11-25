@@ -1,5 +1,6 @@
 """The Notes widget (Settings > Experimental): a Notes button on every page for writing notes, with
-a screenshot. Every build ships it as ``devnotes/`` beside the server (packaging/notes_bundle.py);
+a screenshot. Official builds ship it as ``devnotes/`` beside the server (packaging/notes_bundle.py;
+its sources live outside this repository);
 it runs only while "Experimental features" (Settings > Advanced) and "Notes" (Settings >
 Experimental) are on, and nothing of it is served otherwise.
 

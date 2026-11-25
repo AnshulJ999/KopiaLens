@@ -1,21 +1,11 @@
 """Test-run guardrails. Loaded before any test module, so the env work below lands before
 `config` resolves its module-level paths.
 
-Two things went wrong on 2026-09-17 and both are fenced off here:
-
-  * A test inherited the developer's real cache folder. `test_empty_repo_publishes_an_openable
-    _generation` builds an index for a repo with NO sources, which leaves the tree empty, which
-    triggers `_sync_tree`'s walk-cache upgrade seed - and that read the live 2.0 GB
-    `data/cache/repo1.db`, wrote a 1.9 GB scratch database and ran for minutes. The repository
-    under test was empty; the gigabytes came from the machine.
-  * Nothing bounded a runaway test, so it consumed RAM and disk until someone killed the run.
-
-The cache redirect is the fix; the memory cap and the watchdog are the net under it.
-
-The data folder is sandboxed too (2026-09-23): the shell's KOPIALENS_DATA_DIR points at the live
-install, and a test run wrote into it. Every run gets a throwaway data folder seeded with a copy of
-settings.json and the real repo records with their kopia connections pointed at nothing (no test
-may reach a real repository), and refuses to start if config still resolves to the real folder.
+  * The cache folder is redirected, so no test reads or writes a developer's real index cache.
+  * The data folder is a throwaway copy: settings.json and the repo records, with their kopia
+    connections pointed at nothing (no test may reach a real repository). The run refuses to start
+    if config still resolves to the real data folder.
+  * A memory cap and a watchdog stop a runaway test before it exhausts RAM or disk.
 """
 
 from __future__ import annotations
